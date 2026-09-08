@@ -18,12 +18,27 @@ data class TransactionItem(
     val type: TransactionType,
     val category: String = "Umum",
     val wallet: String = "Tunai",
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val costAmount: Double = 0.0,
+    val isPersonal: Boolean = false
 ) {
     fun formattedAmount(): String {
         val localeID = Locale("in", "ID")
         val numberFormat = NumberFormat.getCurrencyInstance(localeID)
         return numberFormat.format(amount)
+    }
+
+    fun formattedCost(): String {
+        val localeID = Locale("in", "ID")
+        val numberFormat = NumberFormat.getCurrencyInstance(localeID)
+        return numberFormat.format(costAmount)
+    }
+
+    fun formattedGrossProfit(): String {
+        val profit = amount - costAmount
+        val localeID = Locale("in", "ID")
+        val numberFormat = NumberFormat.getCurrencyInstance(localeID)
+        return numberFormat.format(profit)
     }
 
     fun formattedDate(): String {
@@ -45,7 +60,11 @@ data class TransactionItem(
      * Clear TalkBack description with category, wallet, and flow for screen readers.
      */
     fun getAccessibilityDescription(): String {
+        val scopeDesc = if (isPersonal) "Keuangan Pribadi" else "Keuangan Toko"
         val flowDescription = if (type.isCredit) "Pemasukan Dana" else "Pengeluaran Dana"
-        return "Transaksi $flowDescription: $description. Kategori: $category. Sumber dana: $wallet. Jumlah: ${formattedAmount()}. Waktu: ${formattedDate()}."
+        val profitDesc = if (type == TransactionType.SALE && costAmount > 0) {
+            ". Modal barang: ${formattedCost()}, Keuntungan kotor: ${formattedGrossProfit()}"
+        } else ""
+        return "[$scopeDesc] $flowDescription: $description. Kategori: $category. Sumber dana: $wallet. Jumlah: ${formattedAmount()}$profitDesc. Waktu: ${formattedDate()}."
     }
 }

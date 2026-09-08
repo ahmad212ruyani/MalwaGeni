@@ -82,6 +82,8 @@ class CloudFirestoreRepository {
                             } catch (_: Exception) {
                                 TransactionType.EXPENSE
                             }
+                            val costAmount = doc.getDouble("costAmount") ?: 0.0
+                            val isPersonal = doc.getBoolean("isPersonal") ?: false
                             TransactionItem(
                                 id = doc.id,
                                 description = doc.getString("description") ?: "",
@@ -89,7 +91,9 @@ class CloudFirestoreRepository {
                                 type = type,
                                 category = doc.getString("category") ?: "Umum",
                                 wallet = doc.getString("wallet") ?: "Tunai",
-                                timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                                timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis(),
+                                costAmount = costAmount,
+                                isPersonal = isPersonal
                             )
                         } catch (e: Exception) {
                             null
@@ -100,6 +104,38 @@ class CloudFirestoreRepository {
             }
 
         awaitClose { listener.remove() }
+    }
+
+    private fun financeSettingsDoc(userId: String) =
+        firestore.collection("users").document(userId).collection("settings").document("finance")
+
+    fun observeFinanceSettings(userId: String): Flow<Pair<Double, Double>> = callbackFlow {
+        val listener: ListenerRegistration = financeSettingsDoc(userId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) return@addSnapshotListener
+                if (snapshot != null && snapshot.exists()) {
+                    val storeCapital = snapshot.getDouble("storeInitialCapital") ?: 0.0
+                    val personalCapital = snapshot.getDouble("personalInitialCapital") ?: 0.0
+                    trySend(Pair(storeCapital, personalCapital))
+                }
+            }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun updateStoreInitialCapital(userId: String, capital: Double) {
+        val data = hashMapOf<String, Any>(
+            "storeInitialCapital" to capital,
+            "updatedAt" to System.currentTimeMillis()
+        )
+        financeSettingsDoc(userId).set(data, com.google.firebase.firestore.SetOptions.merge()).await()
+    }
+
+    suspend fun updatePersonalInitialCapital(userId: String, capital: Double) {
+        val data = hashMapOf<String, Any>(
+            "personalInitialCapital" to capital,
+            "updatedAt" to System.currentTimeMillis()
+        )
+        financeSettingsDoc(userId).set(data, com.google.firebase.firestore.SetOptions.merge()).await()
     }
 
     // =========================================================================
@@ -125,7 +161,9 @@ class CloudFirestoreRepository {
             "type" to transaction.type.name,
             "category" to transaction.category,
             "wallet" to transaction.wallet,
-            "timestamp" to transaction.timestamp
+            "timestamp" to transaction.timestamp,
+            "costAmount" to transaction.costAmount,
+            "isPersonal" to transaction.isPersonal
         )
         transactionsCollection(userId).document(transaction.id).set(data).await()
     }
@@ -156,7 +194,9 @@ class CloudFirestoreRepository {
             "amount" to transaction.amount,
             "type" to transaction.type.name,
             "category" to transaction.category,
-            "wallet" to transaction.wallet
+            "wallet" to transaction.wallet,
+            "costAmount" to transaction.costAmount,
+            "isPersonal" to transaction.isPersonal
         )
         transactionsCollection(userId).document(transaction.id).update(updates).await()
     }

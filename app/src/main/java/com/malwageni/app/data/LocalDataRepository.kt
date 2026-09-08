@@ -98,7 +98,9 @@ class LocalDataRepository(private val context: Context) {
                         type = type,
                         category = obj.optString("category", "Umum"),
                         wallet = obj.optString("wallet", "Tunai"),
-                        timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                        costAmount = obj.optDouble("costAmount", 0.0),
+                        isPersonal = obj.optBoolean("isPersonal", false)
                     )
                 )
             }
@@ -126,10 +128,64 @@ class LocalDataRepository(private val context: Context) {
                     put("category", t.category)
                     put("wallet", t.wallet)
                     put("timestamp", t.timestamp)
+                    put("costAmount", t.costAmount)
+                    put("isPersonal", t.isPersonal)
                 }
                 jsonArray.put(obj)
             }
             root.put("transactions", jsonArray)
+            dbFile.writeText(root.toString(2))
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun loadStoreInitialCapital(): Double {
+        return try {
+            if (!dbFile.exists()) return 0.0
+            val content = dbFile.readText()
+            if (content.isBlank()) return 0.0
+            val root = JSONObject(content)
+            root.optDouble("storeInitialCapital", 0.0)
+        } catch (e: Exception) {
+            0.0
+        }
+    }
+
+    fun saveStoreInitialCapital(capital: Double) {
+        try {
+            val root = if (dbFile.exists() && dbFile.readText().isNotBlank()) {
+                JSONObject(dbFile.readText())
+            } else {
+                JSONObject()
+            }
+            root.put("storeInitialCapital", capital)
+            dbFile.writeText(root.toString(2))
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun loadPersonalInitialCapital(): Double {
+        return try {
+            if (!dbFile.exists()) return 0.0
+            val content = dbFile.readText()
+            if (content.isBlank()) return 0.0
+            val root = JSONObject(content)
+            root.optDouble("personalInitialCapital", 0.0)
+        } catch (e: Exception) {
+            0.0
+        }
+    }
+
+    fun savePersonalInitialCapital(capital: Double) {
+        try {
+            val root = if (dbFile.exists() && dbFile.readText().isNotBlank()) {
+                JSONObject(dbFile.readText())
+            } else {
+                JSONObject()
+            }
+            root.put("personalInitialCapital", capital)
             dbFile.writeText(root.toString(2))
         } catch (e: Exception) {
             e.printStackTrace()

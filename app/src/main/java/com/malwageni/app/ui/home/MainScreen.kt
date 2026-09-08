@@ -3,6 +3,7 @@ package com.malwageni.app.ui.home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,7 +96,11 @@ fun MainScreen(
     var showAddProductDialog by remember { mutableStateOf(false) }
     var productToEdit by remember { mutableStateOf<ProductItem?>(null) }
 
-    var showAddTransactionDialog by remember { mutableStateOf(false) }
+    var showStoreCapitalDialog by remember { mutableStateOf(false) }
+    var showPersonalCapitalDialog by remember { mutableStateOf(false) }
+
+    var showAddStoreTxDialog by remember { mutableStateOf(false) }
+    var showAddPersonalTxDialog by remember { mutableStateOf(false) }
     var transactionToEdit by remember { mutableStateOf<TransactionItem?>(null) }
 
     LaunchedEffect(Unit) {
@@ -139,36 +144,84 @@ fun MainScreen(
         )
     }
 
-    // Modal Create Daily Financial Transaction
-    if (showAddTransactionDialog) {
+    // Modal Saldo Awal / Modal Toko
+    if (showStoreCapitalDialog) {
+        CapitalFormDialog(
+            title = "Atur Modal Awal Toko",
+            initialAmount = uiState.storeInitialCapital,
+            onDismiss = { showStoreCapitalDialog = false },
+            onSave = { amount ->
+                viewModel.setStoreInitialCapital(amount)
+                showStoreCapitalDialog = false
+            }
+        )
+    }
+
+    // Modal Saldo Awal Keuangan Pribadi
+    if (showPersonalCapitalDialog) {
+        CapitalFormDialog(
+            title = "Atur Saldo Awal Pribadi",
+            initialAmount = uiState.personalInitialCapital,
+            onDismiss = { showPersonalCapitalDialog = false },
+            onSave = { amount ->
+                viewModel.setPersonalInitialCapital(amount)
+                showPersonalCapitalDialog = false
+            }
+        )
+    }
+
+    // Modal Create Store Transaction (Beban / Pemasukan Toko)
+    if (showAddStoreTxDialog) {
         DailyTransactionFormDialog(
-            title = "Catat Keuangan Harian Baru",
+            title = "Catat Transaksi Toko",
+            initialDescription = "",
+            initialAmount = 0.0,
+            initialType = TransactionType.EXPENSE,
+            initialCategory = "Operasional Toko",
+            initialWallet = "Kas Toko",
+            isPersonal = false,
+            onDismiss = { showAddStoreTxDialog = false },
+            onSave = { desc, amount, type, category, wallet ->
+                viewModel.addManualTransaction(desc, amount, type, category, wallet, isPersonal = false)
+                showAddStoreTxDialog = false
+            }
+        )
+    }
+
+    // Modal Create Personal Transaction (Pemasukan / Pengeluaran Pribadi)
+    if (showAddPersonalTxDialog) {
+        DailyTransactionFormDialog(
+            title = "Catat Keuangan Pribadi",
             initialDescription = "",
             initialAmount = 0.0,
             initialType = TransactionType.EXPENSE,
             initialCategory = "Makanan & Minuman",
             initialWallet = "Tunai",
-            onDismiss = { showAddTransactionDialog = false },
+            isPersonal = true,
+            onDismiss = { showAddPersonalTxDialog = false },
             onSave = { desc, amount, type, category, wallet ->
-                viewModel.addManualTransaction(desc, amount, type, category, wallet)
-                showAddTransactionDialog = false
+                viewModel.addManualTransaction(desc, amount, type, category, wallet, isPersonal = true)
+                showAddPersonalTxDialog = false
             }
         )
     }
 
-    // Modal Edit Daily Financial Transaction
+    // Modal Edit Transaction (Toko atau Pribadi)
     if (transactionToEdit != null) {
         val tx = transactionToEdit!!
+        val isPersonalTx = tx.isPersonal
+        val dialogTitle = if (isPersonalTx) "Edit Catatan Pribadi: ${tx.description}" else "Edit Catatan Toko: ${tx.description}"
         DailyTransactionFormDialog(
-            title = "Edit Catatan Keuangan: ${tx.description}",
+            title = dialogTitle,
             initialDescription = tx.description,
             initialAmount = tx.amount,
             initialType = tx.type,
             initialCategory = tx.category,
             initialWallet = tx.wallet,
+            isPersonal = isPersonalTx,
             onDismiss = { transactionToEdit = null },
             onSave = { desc, amount, type, category, wallet ->
-                viewModel.editTransaction(tx.id, desc, amount, type, category, wallet)
+                viewModel.editTransaction(tx.id, desc, amount, type, category, wallet, tx.costAmount, isPersonal = isPersonalTx)
                 transactionToEdit = null
             }
         )
@@ -253,9 +306,17 @@ fun MainScreen(
                     onDelete = { viewModel.deleteProduct(it) },
                     onOpenAddProduct = { showAddProductDialog = true }
                 )
-                AppTab.LEDGER -> LedgerTabContent(
+                AppTab.STORE_LEDGER -> StoreLedgerTabContent(
                     uiState = uiState,
-                    onOpenAddTransaction = { showAddTransactionDialog = true },
+                    onOpenAddTransaction = { showAddStoreTxDialog = true },
+                    onOpenSetCapital = { showStoreCapitalDialog = true },
+                    onEditTransaction = { transactionToEdit = it },
+                    onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                )
+                AppTab.PERSONAL_LEDGER -> PersonalLedgerTabContent(
+                    uiState = uiState,
+                    onOpenAddTransaction = { showAddPersonalTxDialog = true },
+                    onOpenSetCapital = { showPersonalCapitalDialog = true },
                     onEditTransaction = { transactionToEdit = it },
                     onDeleteTransaction = { viewModel.deleteTransaction(it) }
                 )
@@ -273,8 +334,9 @@ fun AccessibleTabBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        horizontalArrangement = Arrangement.SpaceEvenly
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.Start
     ) {
         AppTab.values().forEach { tab ->
             val isSelected = tab == selectedTab
@@ -283,8 +345,7 @@ fun AccessibleTabBar(
 
             Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .defaultMinSize(minHeight = 48.dp)
+                    .defaultMinSize(minHeight = 48.dp, minWidth = 84.dp)
                     .semantics {
                         role = Role.Tab
                         selected = isSelected
@@ -292,20 +353,21 @@ fun AccessibleTabBar(
                         else "${tab.title}. Ketuk dua kali untuk beralih."
                     }
                     .clickable { onTabSelected(tab) }
-                    .padding(vertical = 12.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = tab.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = textColor
+                        style = MaterialTheme.typography.titleSmall,
+                        color = textColor,
+                        textAlign = TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Box(
                         modifier = Modifier
                             .height(3.dp)
-                            .fillMaxWidth(0.6f)
+                            .width(36.dp)
                             .background(activeColor)
                     )
                 }
@@ -596,14 +658,15 @@ fun InventoryTabContent(
 }
 
 /**
- * Enhanced Daily & Store Financial Management Tab.
- * Supports daily breakdown, categories, wallets, and full CRUD.
+ * Store Financial Management Tab (Keuangan Toko).
+ * Displays Saldo Awal/Modal Toko, Pemasukan Toko, Pengeluaran Toko, Keuntungan Kotor, Keuntungan Bersih, and Daily Cashflow.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LedgerTabContent(
+fun StoreLedgerTabContent(
     uiState: MainUiState,
     onOpenAddTransaction: () -> Unit,
+    onOpenSetCapital: () -> Unit,
     onEditTransaction: (TransactionItem) -> Unit,
     onDeleteTransaction: (String) -> Unit
 ) {
@@ -613,11 +676,13 @@ fun LedgerTabContent(
 
     var selectedFilter by remember { mutableStateOf("Semua") }
 
+    val storeTransactions = uiState.transactions.filter { !it.isPersonal }
     val filteredTransactions = when (selectedFilter) {
-        "Hari Ini" -> uiState.transactions.filter { it.isToday() }
-        "Pengeluaran" -> uiState.transactions.filter { !it.type.isCredit }
-        "Pemasukan" -> uiState.transactions.filter { it.type.isCredit }
-        else -> uiState.transactions
+        "Hari Ini" -> storeTransactions.filter { it.isToday() }
+        "Penjualan" -> storeTransactions.filter { it.type == TransactionType.SALE }
+        "Pengeluaran" -> storeTransactions.filter { it.type == TransactionType.EXPENSE }
+        "Pemasukan" -> storeTransactions.filter { it.type == TransactionType.INCOME }
+        else -> storeTransactions
     }
 
     LazyColumn(
@@ -626,13 +691,343 @@ fun LedgerTabContent(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. Daily Overview Card (Ringkasan Keuangan Hari Ini)
+        // 1. Saldo Awal / Modal Toko Card
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics(mergeDescendants = true) {
-                        contentDescription = "Ringkasan Keuangan Hari Ini. Pemasukan hari ini: ${formatRp(uiState.todayRevenue)}. Pengeluaran hari ini: ${formatRp(uiState.todayExpense)}. Sisa kas hari ini: ${formatRp(uiState.todayNet)}."
+                        contentDescription = "Modal atau Saldo Awal Toko: ${formatRp(uiState.storeInitialCapital)}. Ketuk tombol atur untuk mengubah."
+                    },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Modal Awal Toko",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = formatRp(uiState.storeInitialCapital),
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
+                    TextButton(
+                        onClick = onOpenSetCapital,
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = "Tombol atur modal awal toko"
+                            }
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Atur Modal")
+                    }
+                }
+            }
+        }
+
+        // 2. HIGHLIGHT UTAMA: Keuntungan Kotor & Keuntungan Bersih Toko
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Laporan Laba Usaha Toko. Keuntungan kotor: ${formatRp(uiState.storeGrossProfit)}, dari omset penjualan ${formatRp(uiState.storeRevenue)} dikurangi modal pokok barang terjual ${formatRp(uiState.storeCogs)}. Keuntungan bersih: ${formatRp(uiState.storeNetProfit)}, setelah dipotong biaya operasional toko ${formatRp(uiState.storeExpense)}."
+                        liveRegion = LiveRegionMode.Polite
+                    },
+                colors = CardDefaults.cardColors(
+                    containerColor = if (uiState.storeNetProfit >= 0) IncomeGreen.copy(alpha = 0.14f) else ExpenseRed.copy(alpha = 0.14f)
+                ),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Laporan Keuntungan Usaha Toko",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (uiState.storeNetProfit >= 0) IncomeGreen else ExpenseRed,
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (uiState.storeNetProfit >= 0) "Profit" else "Defisit",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Keuntungan Kotor (Gross Profit)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Keuntungan Kotor (Gross Profit)",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Omset ${formatRp(uiState.storeRevenue)} - Modal Barang ${formatRp(uiState.storeCogs)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = formatRp(uiState.storeGrossProfit),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (uiState.storeGrossProfit >= 0) IncomeGreen else ExpenseRed
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+
+                    // Keuntungan Bersih (Net Profit)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Keuntungan Bersih (Net Profit)",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "Laba Kotor - Biaya Operasional ${formatRp(uiState.storeExpense)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = formatRp(uiState.storeNetProfit),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = if (uiState.storeNetProfit >= 0) IncomeGreen else ExpenseRed
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Arus Kas Toko & Saldo Kas Akhir
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Arus Kas Toko. Total pemasukan kas: ${formatRp(uiState.storeRevenue)}. Total pengeluaran toko: ${formatRp(uiState.storeExpense)}. Saldo kas toko saat ini: ${formatRp(uiState.storeFinalBalance)}."
+                    },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Arus Kas & Saldo Toko",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Total Pemasukan Toko:", style = MaterialTheme.typography.bodyMedium)
+                        Text(formatRp(uiState.storeRevenue), style = MaterialTheme.typography.titleSmall, color = IncomeGreen)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Total Pengeluaran Toko:", style = MaterialTheme.typography.bodyMedium)
+                        Text(formatRp(uiState.storeExpense), style = MaterialTheme.typography.titleSmall, color = ExpenseRed)
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Saldo Kas Toko Saat Ini:", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            formatRp(uiState.storeFinalBalance),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = if (uiState.storeFinalBalance >= 0) MaterialTheme.colorScheme.primary else ExpenseRed
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Hari Ini (Daily Performance Toko)
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Performa Toko Hari Ini. Penjualan: ${formatRp(uiState.todayStoreRevenue)}. Beban toko: ${formatRp(uiState.todayStoreExpense)}. Keuntungan bersih hari ini: ${formatRp(uiState.todayStoreNetProfit)}."
+                    },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Performa Toko Hari Ini", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Omset Hari Ini: ${formatRp(uiState.todayStoreRevenue)}", style = MaterialTheme.typography.bodySmall)
+                        Text("Beban Hari Ini: ${formatRp(uiState.todayStoreExpense)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Laba Kotor Hari Ini:", style = MaterialTheme.typography.bodySmall)
+                        Text(formatRp(uiState.todayStoreGrossProfit), style = MaterialTheme.typography.bodySmall, color = IncomeGreen)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Laba Bersih Hari Ini:", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            formatRp(uiState.todayStoreNetProfit),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = if (uiState.todayStoreNetProfit >= 0) IncomeGreen else ExpenseRed
+                        )
+                    }
+                }
+            }
+        }
+
+        // 5. Action Button: Catat Transaksi Toko
+        item {
+            AccessibleActionButton(
+                text = "+ Catat Transaksi / Beban Toko",
+                contentDescription = "Buka formulir untuk mencatat pengeluaran operasional atau pemasukan toko",
+                onClick = onOpenAddTransaction,
+                backgroundColor = MaterialTheme.colorScheme.secondary,
+                icon = Icons.Default.Add,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // 6. Filter Chips
+        item {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val filters = listOf("Semua", "Hari Ini", "Penjualan", "Pengeluaran", "Pemasukan")
+                items(filters) { f ->
+                    FilterChip(
+                        selected = selectedFilter == f,
+                        onClick = { selectedFilter = f },
+                        label = { Text(f) },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+                    )
+                }
+            }
+        }
+
+        // 7. Transaction List Header
+        item {
+            Text(
+                text = "Riwayat Transaksi Toko (${filteredTransactions.size})",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        // 8. List Items
+        if (filteredTransactions.isEmpty()) {
+            item {
+                Text(
+                    text = "Belum ada catatan transaksi toko.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+            }
+        } else {
+            items(filteredTransactions, key = { it.id }) { tx ->
+                TransactionRowCard(
+                    transaction = tx,
+                    onEdit = { onEditTransaction(tx) },
+                    onDelete = { onDeleteTransaction(tx.id) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Personal Financial Management Tab (Keuangan Pribadi).
+ * Tracks daily personal income, personal expenses, balance, and daily cashflow.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PersonalLedgerTabContent(
+    uiState: MainUiState,
+    onOpenAddTransaction: () -> Unit,
+    onOpenSetCapital: () -> Unit,
+    onEditTransaction: (TransactionItem) -> Unit,
+    onDeleteTransaction: (String) -> Unit
+) {
+    val formatRp = { amount: Double ->
+        NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(amount)
+    }
+
+    var selectedFilter by remember { mutableStateOf("Semua") }
+
+    val personalTransactions = uiState.transactions.filter { it.isPersonal }
+    val filteredTransactions = when (selectedFilter) {
+        "Hari Ini" -> personalTransactions.filter { it.isToday() }
+        "Pengeluaran" -> personalTransactions.filter { it.type == TransactionType.EXPENSE }
+        "Pemasukan" -> personalTransactions.filter { it.type == TransactionType.INCOME }
+        else -> personalTransactions
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 1. Saldo Pribadi Saat Ini
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Saldo Keuangan Pribadi saat ini: ${formatRp(uiState.personalBalance)}. Saldo awal pribadi: ${formatRp(uiState.personalInitialCapital)}."
                         liveRegion = LiveRegionMode.Polite
                     },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -644,64 +1039,55 @@ fun LedgerTabContent(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Arus Kas Hari Ini",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Box(
-                            modifier = Modifier
-                                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
+                        Column {
                             Text(
-                                text = "Hari Ini",
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                style = MaterialTheme.typography.bodySmall
+                                text = "Sisa Saldo Pribadi",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = formatRp(uiState.personalBalance),
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = if (uiState.personalBalance >= 0) MaterialTheme.colorScheme.primary else ExpenseRed
+                            )
+                        }
+                        TextButton(
+                            onClick = onOpenSetCapital,
+                            modifier = Modifier
+                                .defaultMinSize(minHeight = 48.dp)
+                                .semantics {
+                                    role = Role.Button
+                                    contentDescription = "Tombol atur saldo awal keuangan pribadi"
+                                }
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Saldo Awal")
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Pemasukan Hari Ini:", style = MaterialTheme.typography.bodyMedium)
-                        Text(formatRp(uiState.todayRevenue), style = MaterialTheme.typography.titleMedium, color = IncomeGreen)
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Pengeluaran Hari Ini:", style = MaterialTheme.typography.bodyMedium)
-                        Text(formatRp(uiState.todayExpense), style = MaterialTheme.typography.titleMedium, color = ExpenseRed)
-                    }
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Sisa Kas Hari Ini:", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            formatRp(uiState.todayNet),
-                            style = MaterialTheme.typography.titleLarge,
-                            color = if (uiState.todayNet >= 0) IncomeGreen else ExpenseRed
-                        )
+                        Text("Saldo Awal: ${formatRp(uiState.personalInitialCapital)}", style = MaterialTheme.typography.bodySmall)
+                        Text("Pemasukan: ${formatRp(uiState.personalIncome)}", style = MaterialTheme.typography.bodySmall, color = IncomeGreen)
+                        Text("Pengeluaran: ${formatRp(uiState.personalExpense)}", style = MaterialTheme.typography.bodySmall, color = ExpenseRed)
                     }
                 }
             }
         }
 
-        // 2. Cumulative Total Balance Card
+        // 2. Aktivitas Hari Ini (Daily Personal Cashflow)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics(mergeDescendants = true) {
-                        contentDescription = "Total Akumulasi Seluruh Waktu. Pemasukan: ${formatRp(uiState.totalRevenue)}. Pengeluaran: ${formatRp(uiState.totalExpense)}. Saldo total: ${formatRp(uiState.netBalance)}."
+                        contentDescription = "Aktivitas Keuangan Pribadi Hari Ini. Pemasukan hari ini: ${formatRp(uiState.todayPersonalIncome)}. Pengeluaran hari ini: ${formatRp(uiState.todayPersonalExpense)}. Sisa hari ini: ${formatRp(uiState.todayPersonalBalance)}."
                     },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(10.dp)
@@ -714,27 +1100,26 @@ fun LedgerTabContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("Saldo Kas Keseluruhan", style = MaterialTheme.typography.bodyMedium)
+                        Text("Arus Pribadi Hari Ini", style = MaterialTheme.typography.bodySmall)
                         Text(
-                            formatRp(uiState.netBalance),
+                            text = if (uiState.todayPersonalBalance >= 0) "+${formatRp(uiState.todayPersonalBalance)}" else formatRp(uiState.todayPersonalBalance),
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (uiState.netBalance >= 0) IncomeGreen else ExpenseRed
+                            color = if (uiState.todayPersonalBalance >= 0) IncomeGreen else ExpenseRed
                         )
                     }
-                    Text(
-                        text = "Total ${uiState.transactions.size} Transaksi",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("Masuk: ${formatRp(uiState.todayPersonalIncome)}", style = MaterialTheme.typography.bodySmall, color = IncomeGreen)
+                        Text("Keluar: ${formatRp(uiState.todayPersonalExpense)}", style = MaterialTheme.typography.bodySmall, color = ExpenseRed)
+                    }
                 }
             }
         }
 
-        // 3. Primary Action Button
+        // 3. Action Button: Catat Keuangan Pribadi
         item {
             AccessibleActionButton(
-                text = "+ Catat Keuangan Harian",
-                contentDescription = "Buka formulir untuk mencatat pengeluaran atau pemasukan harian Anda",
+                text = "+ Catat Keuangan Pribadi",
+                contentDescription = "Buka formulir untuk mencatat pengeluaran atau pemasukan pribadi harian",
                 onClick = onOpenAddTransaction,
                 backgroundColor = MaterialTheme.colorScheme.secondary,
                 icon = Icons.Default.Add,
@@ -749,151 +1134,155 @@ fun LedgerTabContent(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 val filters = listOf("Semua", "Hari Ini", "Pengeluaran", "Pemasukan")
-                items(filters) { filter ->
+                items(filters) { f ->
                     FilterChip(
-                        selected = selectedFilter == filter,
-                        onClick = { selectedFilter = filter },
-                        label = { Text(filter) },
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = 48.dp)
-                            .semantics {
-                                role = Role.Tab
-                                selected = selectedFilter == filter
-                                contentDescription = "Filter riwayat $filter"
-                            }
+                        selected = selectedFilter == f,
+                        onClick = { selectedFilter = f },
+                        label = { Text(f) },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp)
                     )
                 }
             }
         }
 
-        // 5. Empty State or List
+        // 5. Section Title
+        item {
+            Text(
+                text = "Riwayat Catatan Pribadi (${filteredTransactions.size})",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        // 6. List Items
         if (filteredTransactions.isEmpty()) {
             item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics(mergeDescendants = true) {
-                            contentDescription = "Belum ada catatan transaksi pada filter $selectedFilter. Ketuk tombol Catat Keuangan Harian di atas."
-                        },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ReceiptLong,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Belum Ada Catatan Transaksi",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = "Mulai kelola pengeluaran dan pemasukan harian Anda dengan tombol '+ Catat Keuangan Harian' di atas.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                Text(
+                    text = "Belum ada catatan keuangan pribadi.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
             }
         } else {
-            items(filteredTransactions) { tx ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics(mergeDescendants = true) {
-                            contentDescription = tx.getAccessibilityDescription()
-                        },
-                    shape = RoundedCornerShape(10.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Top
+            items(filteredTransactions, key = { it.id }) { tx ->
+                TransactionRowCard(
+                    transaction = tx,
+                    onEdit = { onEditTransaction(tx) },
+                    onDelete = { onDeleteTransaction(tx.id) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Universal Card for displaying individual transactions (Store or Personal).
+ */
+@Composable
+fun TransactionRowCard(
+    transaction: TransactionItem,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = transaction.getAccessibilityDescription()
+            },
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = transaction.description,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = transaction.category,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = transaction.wallet,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (transaction.type == TransactionType.SALE && transaction.costAmount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .background(IncomeGreen.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
                                 Text(
-                                    text = tx.description,
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Box(
-                                        modifier = Modifier
-                                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(
-                                            text = tx.category,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(
-                                            text = tx.wallet,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = tx.formattedDate(),
+                                    text = "Laba: +${transaction.formattedGrossProfit()}",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = IncomeGreen
                                 )
                             }
-
-                            val prefix = if (tx.type.isCredit) "+ " else "- "
-                            val amountColor = if (tx.type.isCredit) IncomeGreen else ExpenseRed
-
-                            Text(
-                                text = "$prefix${tx.formattedAmount()}",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = amountColor
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Edit and Delete actions
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            AccessibleActionButton(
-                                text = "Edit",
-                                contentDescription = "Edit catatan transaksi ${tx.description}",
-                                onClick = { onEditTransaction(tx) },
-                                icon = Icons.Default.Edit,
-                                backgroundColor = MaterialTheme.colorScheme.secondary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            AccessibleActionButton(
-                                text = "Hapus",
-                                contentDescription = "Hapus catatan transaksi ${tx.description}",
-                                onClick = { onDeleteTransaction(tx.id) },
-                                icon = Icons.Default.Delete,
-                                backgroundColor = ExpenseRed
-                            )
                         }
                     }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = transaction.formattedDate(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+
+                val prefix = if (transaction.type.isCredit) "+ " else "- "
+                val amountColor = if (transaction.type.isCredit) IncomeGreen else ExpenseRed
+
+                Text(
+                    text = "$prefix${transaction.formattedAmount()}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = amountColor
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Edit and Delete actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                AccessibleActionButton(
+                    text = "Edit",
+                    contentDescription = "Edit catatan transaksi ${transaction.description}",
+                    onClick = onEdit,
+                    icon = Icons.Default.Edit,
+                    backgroundColor = MaterialTheme.colorScheme.secondary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                AccessibleActionButton(
+                    text = "Hapus",
+                    contentDescription = "Hapus catatan transaksi ${transaction.description}",
+                    onClick = onDelete,
+                    icon = Icons.Default.Delete,
+                    backgroundColor = ExpenseRed
+                )
             }
         }
     }
@@ -1003,8 +1392,74 @@ fun ProductFormDialog(
 }
 
 /**
+ * Accessible Dialog for setting Initial Capital (Modal Awal Toko / Saldo Awal Pribadi).
+ */
+@Composable
+fun CapitalFormDialog(
+    title: String,
+    initialAmount: Double,
+    onDismiss: () -> Unit,
+    onSave: (amount: Double) -> Unit
+) {
+    var amountStr by remember {
+        mutableStateOf(if (initialAmount > 0) initialAmount.toInt().toString() else "")
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Masukkan saldo awal atau modal awal kas. Nominal ini akan menjadi dasar perhitungan saldo berjalan.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = amountStr,
+                    onValueChange = { amountStr = it },
+                    label = { Text("Nominal Saldo Awal (Rp)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val amount = amountStr.toDoubleOrNull() ?: 0.0
+                    onSave(amount)
+                },
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+            ) {
+                Text("Simpan", style = MaterialTheme.typography.labelLarge)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+            ) {
+                Text("Batal", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    )
+}
+
+/**
  * Dialog for Creating and Editing Daily Financial Transactions.
- * Supports Categories, Wallets, and Type Selection.
+ * Supports Categories, Wallets, and Type Selection for Store vs Personal.
  */
 @Composable
 fun DailyTransactionFormDialog(
@@ -1014,22 +1469,77 @@ fun DailyTransactionFormDialog(
     initialType: TransactionType,
     initialCategory: String,
     initialWallet: String,
+    isPersonal: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (description: String, amount: Double, type: TransactionType, category: String, wallet: String) -> Unit
 ) {
     var description by remember { mutableStateOf(initialDescription) }
     var amountStr by remember { mutableStateOf(if (initialAmount > 0) initialAmount.toInt().toString() else "") }
-    var selectedType by remember { mutableStateOf(if (initialType == TransactionType.SALE) TransactionType.INCOME else initialType) }
-    var selectedCategory by remember { mutableStateOf(initialCategory) }
-    var selectedWallet by remember { mutableStateOf(initialWallet) }
-
-    val categories = if (selectedType == TransactionType.EXPENSE) {
-        listOf("Makanan & Minuman", "Transport & Bensin", "Kebutuhan Rumah", "Pulsa & Listrik", "Tagihan", "Modal Usaha", "Lain-lain")
-    } else {
-        listOf("Gaji & Upah", "Keuntungan Toko", "Uang Saku", "Hasil Penjualan", "Hadiah", "Lain-lain")
+    var selectedType by remember {
+        mutableStateOf(if (initialType == TransactionType.SALE) TransactionType.INCOME else initialType)
     }
 
-    val wallets = listOf("Tunai", "Transfer Bank", "E-Wallet (Gopay/OVO/Dana)")
+    val storeExpenseCategories = listOf(
+        "Operasional Toko",
+        "Sewa Tempat",
+        "Listrik & Air Toko",
+        "Gaji Karyawan",
+        "Belanja Modal / Stok",
+        "Ongkir & Pengiriman",
+        "Lain-lain Toko"
+    )
+    val storeIncomeCategories = listOf(
+        "Penjualan Toko",
+        "Pendapatan Lain Toko",
+        "Tambahan Modal Pemilik",
+        "Lain-lain Toko"
+    )
+    val storeWallets = listOf("Kas Toko (Tunai)", "Rekening Bank Toko", "QRIS / E-Wallet Toko")
+
+    val personalExpenseCategories = listOf(
+        "Makanan & Minuman",
+        "Transport & Bensin",
+        "Kebutuhan Rumah",
+        "Pulsa & Listrik",
+        "Tagihan Pribadi",
+        "Hiburan & Jajan",
+        "Lain-lain Pribadi"
+    )
+    val personalIncomeCategories = listOf(
+        "Gaji & Upah",
+        "Bagi Hasil Toko",
+        "Uang Saku",
+        "Hadiah & Bonus",
+        "Lain-lain Pribadi"
+    )
+    val personalWallets = listOf("Tunai", "Rekening Bank Pribadi", "E-Wallet (Gopay/OVO/Dana)")
+
+    val currentCategories = if (isPersonal) {
+        if (selectedType == TransactionType.EXPENSE) personalExpenseCategories else personalIncomeCategories
+    } else {
+        if (selectedType == TransactionType.EXPENSE) storeExpenseCategories else storeIncomeCategories
+    }
+
+    val currentWallets = if (isPersonal) personalWallets else storeWallets
+
+    var selectedCategory by remember {
+        mutableStateOf(
+            if (initialCategory.isNotBlank() && initialCategory in currentCategories) {
+                initialCategory
+            } else {
+                currentCategories.firstOrNull() ?: "Lain-lain"
+            }
+        )
+    }
+    var selectedWallet by remember {
+        mutableStateOf(
+            if (initialWallet.isNotBlank() && initialWallet in currentWallets) {
+                initialWallet
+            } else {
+                currentWallets.firstOrNull() ?: "Tunai"
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1056,7 +1566,7 @@ fun DailyTransactionFormDialog(
                         modifier = Modifier
                             .clickable {
                                 selectedType = TransactionType.EXPENSE
-                                selectedCategory = "Makanan & Minuman"
+                                selectedCategory = if (isPersonal) "Makanan & Minuman" else "Operasional Toko"
                             }
                             .padding(4.dp)
                     ) {
@@ -1064,7 +1574,7 @@ fun DailyTransactionFormDialog(
                             selected = selectedType == TransactionType.EXPENSE,
                             onClick = {
                                 selectedType = TransactionType.EXPENSE
-                                selectedCategory = "Makanan & Minuman"
+                                selectedCategory = if (isPersonal) "Makanan & Minuman" else "Operasional Toko"
                             }
                         )
                         Text("Pengeluaran")
@@ -1075,7 +1585,7 @@ fun DailyTransactionFormDialog(
                         modifier = Modifier
                             .clickable {
                                 selectedType = TransactionType.INCOME
-                                selectedCategory = "Gaji & Upah"
+                                selectedCategory = if (isPersonal) "Gaji & Upah" else "Penjualan Toko"
                             }
                             .padding(4.dp)
                     ) {
@@ -1083,7 +1593,7 @@ fun DailyTransactionFormDialog(
                             selected = selectedType == TransactionType.INCOME,
                             onClick = {
                                 selectedType = TransactionType.INCOME
-                                selectedCategory = "Gaji & Upah"
+                                selectedCategory = if (isPersonal) "Gaji & Upah" else "Penjualan Toko"
                             }
                         )
                         Text("Pemasukan")
@@ -1093,7 +1603,9 @@ fun DailyTransactionFormDialog(
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Keterangan (misal: Makan Siang)") },
+                    label = {
+                        Text(if (isPersonal) "Keterangan (misal: Beli makan siang)" else "Keterangan (misal: Beli plastik & lakban)")
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1110,7 +1622,7 @@ fun DailyTransactionFormDialog(
                 // Category Selection
                 Text("Pilih Kategori:", style = MaterialTheme.typography.labelLarge)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    categories.forEach { cat ->
+                    currentCategories.forEach { cat ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -1128,9 +1640,9 @@ fun DailyTransactionFormDialog(
                 }
 
                 // Wallet Selection
-                Text("Sumber Dana / Dompet:", style = MaterialTheme.typography.labelLarge)
+                Text("Sumber Dana / Dompet Kas:", style = MaterialTheme.typography.labelLarge)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    wallets.forEach { wal ->
+                    currentWallets.forEach { wal ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier

@@ -25,9 +25,10 @@ import java.text.NumberFormat
 import java.util.Locale
 
 enum class AppTab(val title: String, val a11yDescription: String) {
-    POS("Kasir", "Menu Kasir. Kelola transaksi dan penjualan."),
-    INVENTORY("Stok Barang", "Menu Stok Barang. Pantau persediaan, edit, dan tambah produk."),
-    LEDGER("Buku Keuangan", "Menu Buku Keuangan Pribadi dan Usaha.")
+    POS("Kasir", "Tab 1 dari 4: Menu Kasir Penjualan Toko."),
+    INVENTORY("Stok Barang", "Tab 2 dari 4: Menu Manajemen Persediaan dan Katalog Produk."),
+    STORE_LEDGER("Keuangan Toko", "Tab 3 dari 4: Menu Laporan Keuangan Toko, Modal Usaha, Laba Kotor, dan Laba Bersih."),
+    PERSONAL_LEDGER("Keuangan Pribadi", "Tab 4 dari 4: Menu Pencatatan Keuangan Pribadi Sehari-hari.")
 }
 
 data class CartItem(
@@ -41,12 +42,37 @@ data class MainUiState(
     val products: List<ProductItem> = emptyList(),
     val cart: List<CartItem> = emptyList(),
     val transactions: List<TransactionItem> = emptyList(),
+
+    // Keuangan Toko (Store Finance & Profit/Loss)
+    val storeInitialCapital: Double = 0.0,
+    val storeRevenue: Double = 0.0,
+    val storeExpense: Double = 0.0,
+    val storeCogs: Double = 0.0,
+    val storeGrossProfit: Double = 0.0,
+    val storeNetProfit: Double = 0.0,
+    val storeFinalBalance: Double = 0.0,
+    val todayStoreRevenue: Double = 0.0,
+    val todayStoreExpense: Double = 0.0,
+    val todayStoreGrossProfit: Double = 0.0,
+    val todayStoreNetProfit: Double = 0.0,
+
+    // Keuangan Pribadi (Personal Finance)
+    val personalInitialCapital: Double = 0.0,
+    val personalIncome: Double = 0.0,
+    val personalExpense: Double = 0.0,
+    val personalBalance: Double = 0.0,
+    val todayPersonalIncome: Double = 0.0,
+    val todayPersonalExpense: Double = 0.0,
+    val todayPersonalBalance: Double = 0.0,
+
+    // Legacy backwards compatibility fields
     val totalRevenue: Double = 0.0,
     val totalExpense: Double = 0.0,
     val netBalance: Double = 0.0,
     val todayRevenue: Double = 0.0,
     val todayExpense: Double = 0.0,
     val todayNet: Double = 0.0,
+
     val isSyncing: Boolean = false
 )
 
@@ -65,12 +91,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var activeUserId: String = "guest_local"
     private var productSyncJob: Job? = null
     private var transactionSyncJob: Job? = null
+    private var financeSettingsSyncJob: Job? = null
 
     init {
         // Load initial offline cached data
         val localProducts = localRepo.loadProducts()
         val localTransactions = localRepo.loadTransactions()
-        _uiState.update { it.copy(products = localProducts, transactions = localTransactions) }
+        val localStoreCapital = localRepo.loadStoreInitialCapital()
+        val localPersonalCapital = localRepo.loadPersonalInitialCapital()
+        _uiState.update {
+            it.copy(
+                products = localProducts,
+                transactions = localTransactions,
+                storeInitialCapital = localStoreCapital,
+                personalInitialCapital = localPersonalCapital
+            )
+        }
         recalculateFinance()
 
         observeNetwork()
@@ -101,6 +137,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun startRealtimeCloudSync(userId: String) {
         productSyncJob?.cancel()
         transactionSyncJob?.cancel()
+        financeSettingsSyncJob?.cancel()
 
         _uiState.update { it.copy(isSyncing = true) }
 
@@ -126,6 +163,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (_: Exception) {}
         }
+
+        // Realtime listener for Finance Settings (Modal/Saldo Awal) in Firestore
+        financeSettingsSyncJob = viewModelScope.launch {
+            try {
+                cloudRepo.observeFinanceSettings(userId).collect { (storeCapital, personalCapital) ->
+                    _uiState.update {
+                        it.copy(
+                            storeInitialCapital = storeCapital,
+                            personalInitialCapital = personalCapital
+                        )
+                    }
+                    localRepo.saveStoreInitialCapital(storeCapital)
+                    localRepo.savePersonalInitialCapital(personalCapital)
+                    recalculateFinance()
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun setStoreInitialCapital(amount: Double) {
+        val nonNeg = amount.coerceAtLeast(0.0)
+        _uiState.update { it.copy(storeInitialCapital = nonNeg) }
+        localRepo.saveStoreInitialCapital(nonNeg)
+        viewModelScope.launch {
+            try {
+                cloudRepo.updateStoreInitialCapital(activeUserId, nonNeg)
+            } catch (_: Exception) {}
+        }
+        recalculateFinance()
+        val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(nonNeg)
+        announce("Saldo awal modal usaha toko berhasil disimpan: $formatRp.")
+    }
+
+    fun setPersonalInitialCapital(amount: Double) {
+        val nonNeg = amount.coerceAtLeast(0.0)
+        _uiState.update { it.copy(personalInitialCapital = nonNeg) }
+        localRepo.savePersonalInitialCapital(nonNeg)
+        viewModelScope.launch {
+            try {
+                cloudRepo.updatePersonalInitialCapital(activeUserId, nonNeg)
+            } catch (_: Exception) {}
+        }
+        recalculateFinance()
+        val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(nonNeg)
+        announce("Saldo awal keuangan pribadi berhasil disimpan: $formatRp.")
     }
 
     fun selectTab(tab: AppTab) {
@@ -283,7 +365,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val cartTotal = currentCart.sumOf { it.product.sellPrice * it.quantity }
+        val cartCostTotal = currentCart.sumOf { it.product.costPrice * it.quantity }
+        val grossProfit = cartTotal - cartCostTotal
         val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(cartTotal)
+        val formatProfit = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(grossProfit)
 
         val updatedProducts = _uiState.value.products.map { prod ->
             val bought = currentCart.find { it.product.id == prod.id }
@@ -293,9 +378,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val newTransaction = TransactionItem(
             id = "tx_" + System.currentTimeMillis(),
-            description = "Penjualan Kasir (${currentCart.size} jenis barang)",
+            description = "Penjualan Kasir (${currentCart.sumOf { it.quantity }} barang)",
             amount = cartTotal,
-            type = TransactionType.SALE
+            type = TransactionType.SALE,
+            category = "Penjualan Toko",
+            wallet = "Kas Toko",
+            costAmount = cartCostTotal,
+            isPersonal = false
         )
 
         val updatedTransactions = listOf(newTransaction) + _uiState.value.transactions
@@ -323,15 +412,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         recalculateFinance()
-        announce("Pembayaran berhasil senilai $formatRp. Data kasir dan stok otomatis disimpan ke database online.")
+        announce("Pembayaran kasir berhasil: $formatRp. Keuntungan kotor: $formatProfit. Data otomatis tersimpan ke cloud.")
     }
 
     // =========================================================================
-    // CRUD: TRANSAKSI KEUANGAN (CREATE, DELETE)
-    // =========================================================================
-
-    // =========================================================================
-    // CRUD: TRANSAKSI KEUANGAN HARIAN & USAHA (CREATE, EDIT, DELETE)
+    // CRUD: TRANSAKSI KEUANGAN TOKO & PRIBADI (CREATE, EDIT, DELETE)
     // =========================================================================
 
     fun addManualTransaction(
@@ -339,7 +424,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         amount: Double,
         type: TransactionType,
         category: String = "Umum",
-        wallet: String = "Tunai"
+        wallet: String = "Tunai",
+        isPersonal: Boolean = false
     ) {
         if (description.isBlank() || amount <= 0.0) {
             announce("Keterangan dan nominal transaksi tidak boleh kosong.")
@@ -352,7 +438,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             amount = amount,
             type = type,
             category = category.trim(),
-            wallet = wallet.trim()
+            wallet = wallet.trim(),
+            costAmount = 0.0,
+            isPersonal = isPersonal
         )
 
         val updatedTxs = listOf(newTx) + _uiState.value.transactions
@@ -368,7 +456,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recalculateFinance()
 
         val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(amount)
-        announce("Transaksi harian $description ($category) senilai $formatRp berhasil disimpan ke database cloud.")
+        val ledgerName = if (isPersonal) "keuangan pribadi" else "keuangan toko"
+        announce("Transaksi $ledgerName $description ($category) senilai $formatRp berhasil disimpan ke database cloud.")
     }
 
     fun editTransaction(
@@ -377,7 +466,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         amount: Double,
         type: TransactionType,
         category: String,
-        wallet: String
+        wallet: String,
+        costAmount: Double = 0.0,
+        isPersonal: Boolean = false
     ) {
         val target = _uiState.value.transactions.find { it.id == transactionId } ?: return
         val updatedTx = target.copy(
@@ -385,7 +476,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             amount = amount,
             type = type,
             category = category.trim(),
-            wallet = wallet.trim()
+            wallet = wallet.trim(),
+            costAmount = costAmount,
+            isPersonal = isPersonal
         )
 
         val updatedList = _uiState.value.transactions.map { if (it.id == transactionId) updatedTx else it }
@@ -418,30 +511,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recalculateFinance()
 
         if (target != null) {
-            announce("Transaksi ${target.description} telah dihapus dari database cloud.")
+            val ledgerName = if (target.isPersonal) "keuangan pribadi" else "keuangan toko"
+            announce("Transaksi $ledgerName ${target.description} telah dihapus dari database cloud.")
         }
     }
 
     private fun recalculateFinance() {
         val txs = _uiState.value.transactions
-        val revenue = txs.filter { it.type == TransactionType.INCOME || it.type == TransactionType.SALE }.sumOf { it.amount }
-        val expense = txs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
-        val net = revenue - expense
+        val storeCapital = _uiState.value.storeInitialCapital
+        val personalCapital = _uiState.value.personalInitialCapital
 
-        // Daily (Hari ini) metrics
-        val todayTxs = txs.filter { it.isToday() }
-        val todayRev = todayTxs.filter { it.type == TransactionType.INCOME || it.type == TransactionType.SALE }.sumOf { it.amount }
-        val todayExp = todayTxs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
-        val todayNet = todayRev - todayExp
+        // --- Store Finance (isPersonal == false) ---
+        val storeTxs = txs.filter { !it.isPersonal }
+        val storeRev = storeTxs.filter { it.type == TransactionType.INCOME || it.type == TransactionType.SALE }.sumOf { it.amount }
+        val storeExp = storeTxs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        val storeCogs = storeTxs.filter { it.type == TransactionType.SALE }.sumOf { it.costAmount }
+        val storeGross = storeRev - storeCogs
+        val storeNet = storeGross - storeExp
+        val storeBalance = storeCapital + storeRev - storeExp
+
+        val todayStoreTxs = storeTxs.filter { it.isToday() }
+        val todayStoreRev = todayStoreTxs.filter { it.type == TransactionType.INCOME || it.type == TransactionType.SALE }.sumOf { it.amount }
+        val todayStoreExp = todayStoreTxs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        val todayStoreCogs = todayStoreTxs.filter { it.type == TransactionType.SALE }.sumOf { it.costAmount }
+        val todayStoreGross = todayStoreRev - todayStoreCogs
+        val todayStoreNet = todayStoreGross - todayStoreExp
+
+        // --- Personal Finance (isPersonal == true) ---
+        val personalTxs = txs.filter { it.isPersonal }
+        val personalInc = personalTxs.filter { it.type == TransactionType.INCOME || it.type == TransactionType.SALE }.sumOf { it.amount }
+        val personalExp = personalTxs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        val personalBal = personalCapital + personalInc - personalExp
+
+        val todayPersonalTxs = personalTxs.filter { it.isToday() }
+        val todayPersonalInc = todayPersonalTxs.filter { it.type == TransactionType.INCOME || it.type == TransactionType.SALE }.sumOf { it.amount }
+        val todayPersonalExp = todayPersonalTxs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        val todayPersonalBal = todayPersonalInc - todayPersonalExp
 
         _uiState.update {
             it.copy(
-                totalRevenue = revenue,
-                totalExpense = expense,
-                netBalance = net,
-                todayRevenue = todayRev,
-                todayExpense = todayExp,
-                todayNet = todayNet
+                storeRevenue = storeRev,
+                storeExpense = storeExp,
+                storeCogs = storeCogs,
+                storeGrossProfit = storeGross,
+                storeNetProfit = storeNet,
+                storeFinalBalance = storeBalance,
+                todayStoreRevenue = todayStoreRev,
+                todayStoreExpense = todayStoreExp,
+                todayStoreGrossProfit = todayStoreGross,
+                todayStoreNetProfit = todayStoreNet,
+
+                personalIncome = personalInc,
+                personalExpense = personalExp,
+                personalBalance = personalBal,
+                todayPersonalIncome = todayPersonalInc,
+                todayPersonalExpense = todayPersonalExp,
+                todayPersonalBalance = todayPersonalBal,
+
+                // Legacy backwards compatibility
+                totalRevenue = storeRev,
+                totalExpense = storeExp,
+                netBalance = storeBalance,
+                todayRevenue = todayStoreRev,
+                todayExpense = todayStoreExp,
+                todayNet = todayStoreNet
             )
         }
     }
