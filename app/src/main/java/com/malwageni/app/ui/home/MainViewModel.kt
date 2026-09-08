@@ -376,9 +376,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else prod
         }
 
+        val itemsSummary = currentCart.joinToString(", ") { "${it.product.name} (${it.quantity}x)" }
         val newTransaction = TransactionItem(
             id = "tx_" + System.currentTimeMillis(),
-            description = "Penjualan Kasir (${currentCart.sumOf { it.quantity }} barang)",
+            description = "Kasir: $itemsSummary",
             amount = cartTotal,
             type = TransactionType.SALE,
             category = "Penjualan Toko",

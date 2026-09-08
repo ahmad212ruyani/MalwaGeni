@@ -79,11 +79,7 @@ fun LoginScreen(
     val googleSignInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            authViewModel.handleGoogleSignInIntentResult(result.data)
-        } else {
-            authViewModel.handleGoogleSignInIntentResult(null)
-        }
+        authViewModel.handleGoogleSignInIntentResult(result.data)
     }
 
     // Pre-resolve strings at Composable level
@@ -348,6 +344,16 @@ fun LoginScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Catatan: Agar data tidak hilang saat aplikasi dihapus atau ganti HP, daftarkan akun dengan Email & Password atau Google.",
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Offline Guest Mode button
                 OutlinedButton(

@@ -173,10 +173,10 @@ class FirebaseAuthManager(private val context: Context) {
         } catch (e: ApiException) {
             when (e.statusCode) {
                 12501 -> AuthResult.Cancelled
-                12500 -> AuthResult.Error("Google Sign-In belum diaktifkan di Firebase Console (Status 12500). Buka Firebase Console > Authentication > Sign-in method, aktifkan Google dan pilih Project support email.")
-                10 -> AuthResult.Error("Konfigurasi aplikasi di Firebase belum cocok (DEVELOPER_ERROR: Kode 10). Pastikan SHA-1 Keystore (BF:70:67:46:28:BE:E5:D6:3F:CB:32:41:DF:95:F2:4F:C5:BB:8F:30) terdaftar di Firebase Console.")
+                12500 -> AuthResult.Error("Google Sign-In belum aktif di Firebase (Status 12500). Solusi instan: Gunakan menu Masuk/Daftar dengan Email di bawah ini.")
+                10 -> AuthResult.Error("Konfigurasi Google SHA-1 belum cocok di Firebase (Kode 10). Solusi instan: Silakan Masuk atau Daftar langsung menggunakan Email & Kata Sandi di bawah.")
                 7 -> AuthResult.Error("Koneksi jaringan bermasalah saat menghubungkan ke Google Play Services.")
-                else -> AuthResult.Error("Google Play Services (Kode ${e.statusCode}): ${e.localizedMessage ?: "Gagal memproses login"}")
+                else -> AuthResult.Error("Google Play Services (Kode ${e.statusCode}): ${e.localizedMessage ?: "Gagal memproses login"}. Anda bisa langsung Masuk/Daftar dengan Email di bawah.")
             }
         } catch (e: Exception) {
             AuthResult.Error("Gagal autentikasi Google: ${e.localizedMessage ?: "Terjadi kesalahan"}")
@@ -273,6 +273,34 @@ class FirebaseAuthManager(private val context: Context) {
             profilePictureUrl = fbUser.photoUrl?.toString(),
             isAnonymous = fbUser.isAnonymous
         )
+    }
+
+    /**
+     * Authenticates as Anonymous user in Firebase Auth.
+     * If anonymous auth is enabled in Firebase Console, gives real Cloud Firestore persistence.
+     * Falls back to local guest session if offline or not enabled.
+     */
+    suspend fun signInAnonymously(): AuthResult {
+        return try {
+            val authResult = withTimeoutOrNull(8000L) {
+                firebaseAuth.signInAnonymously().await()
+            }
+            if (authResult?.user != null) {
+                val fbUser = authResult.user!!
+                val user = UserAccount(
+                    id = fbUser.uid,
+                    displayName = "Tamu Toko (Cloud)",
+                    email = "guest@malwageni.app",
+                    profilePictureUrl = null,
+                    isAnonymous = true
+                )
+                AuthResult.Success(user)
+            } else {
+                AuthResult.Success(createInstantGuestSession())
+            }
+        } catch (_: Exception) {
+            AuthResult.Success(createInstantGuestSession())
+        }
     }
 
     /**

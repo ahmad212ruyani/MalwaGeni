@@ -284,6 +284,49 @@ fun MainScreen(
         ) {
             AccessibleNetworkStatusBar(status = uiState.networkStatus)
 
+            if (currentUser != null && currentUser.isAnonymous) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = "Peringatan mode tamu: Data belum terhubung ke akun permanen. Daftar dengan Email atau Google agar data tidak hilang saat aplikasi dihapus."
+                        },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Mode Tamu: Data belum terhubung ke akun.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                text = "Daftar Akun agar data aman jika aplikasi dihapus.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        TextButton(
+                            onClick = onSignOut,
+                            modifier = Modifier.semantics {
+                                role = Role.Button
+                                contentDescription = "Tombol keluar untuk mendaftar akun permanen"
+                            }
+                        ) {
+                            Text("Daftar Akun", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
+
             AccessibleTabBar(
                 selectedTab = uiState.currentTab,
                 onTabSelected = { viewModel.selectTab(it) }
@@ -1230,6 +1273,17 @@ fun TransactionRowCard(
                             )
                         }
                         if (transaction.type == TransactionType.SALE && transaction.costAmount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "Modal: ${transaction.formattedCost()}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                             Box(
                                 modifier = Modifier
                                     .background(IncomeGreen.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
