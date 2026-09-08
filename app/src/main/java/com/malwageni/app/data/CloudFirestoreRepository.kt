@@ -87,6 +87,8 @@ class CloudFirestoreRepository {
                                 description = doc.getString("description") ?: "",
                                 amount = doc.getDouble("amount") ?: 0.0,
                                 type = type,
+                                category = doc.getString("category") ?: "Umum",
+                                wallet = doc.getString("wallet") ?: "Tunai",
                                 timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
                             )
                         } catch (e: Exception) {
@@ -121,6 +123,8 @@ class CloudFirestoreRepository {
             "description" to transaction.description,
             "amount" to transaction.amount,
             "type" to transaction.type.name,
+            "category" to transaction.category,
+            "wallet" to transaction.wallet,
             "timestamp" to transaction.timestamp
         )
         transactionsCollection(userId).document(transaction.id).set(data).await()
@@ -150,7 +154,9 @@ class CloudFirestoreRepository {
         val updates = hashMapOf<String, Any>(
             "description" to transaction.description,
             "amount" to transaction.amount,
-            "type" to transaction.type.name
+            "type" to transaction.type.name,
+            "category" to transaction.category,
+            "wallet" to transaction.wallet
         )
         transactionsCollection(userId).document(transaction.id).update(updates).await()
     }

@@ -96,6 +96,8 @@ class LocalDataRepository(private val context: Context) {
                         description = obj.getString("description"),
                         amount = obj.optDouble("amount", 0.0),
                         type = type,
+                        category = obj.optString("category", "Umum"),
+                        wallet = obj.optString("wallet", "Tunai"),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis())
                     )
                 )
@@ -121,6 +123,8 @@ class LocalDataRepository(private val context: Context) {
                     put("description", t.description)
                     put("amount", t.amount)
                     put("type", t.type.name)
+                    put("category", t.category)
+                    put("wallet", t.wallet)
                     put("timestamp", t.timestamp)
                 }
                 jsonArray.put(obj)

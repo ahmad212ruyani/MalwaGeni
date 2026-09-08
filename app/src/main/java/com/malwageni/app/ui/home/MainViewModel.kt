@@ -44,6 +44,9 @@ data class MainUiState(
     val totalRevenue: Double = 0.0,
     val totalExpense: Double = 0.0,
     val netBalance: Double = 0.0,
+    val todayRevenue: Double = 0.0,
+    val todayExpense: Double = 0.0,
+    val todayNet: Double = 0.0,
     val isSyncing: Boolean = false
 )
 
@@ -327,7 +330,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // CRUD: TRANSAKSI KEUANGAN (CREATE, DELETE)
     // =========================================================================
 
-    fun addManualTransaction(description: String, amount: Double, type: TransactionType) {
+    // =========================================================================
+    // CRUD: TRANSAKSI KEUANGAN HARIAN & USAHA (CREATE, EDIT, DELETE)
+    // =========================================================================
+
+    fun addManualTransaction(
+        description: String,
+        amount: Double,
+        type: TransactionType,
+        category: String = "Umum",
+        wallet: String = "Tunai"
+    ) {
         if (description.isBlank() || amount <= 0.0) {
             announce("Keterangan dan nominal transaksi tidak boleh kosong.")
             return
@@ -337,7 +350,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             id = "tx_" + System.currentTimeMillis(),
             description = description.trim(),
             amount = amount,
-            type = type
+            type = type,
+            category = category.trim(),
+            wallet = wallet.trim()
         )
 
         val updatedTxs = listOf(newTx) + _uiState.value.transactions
@@ -353,7 +368,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recalculateFinance()
 
         val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(amount)
-        announce("Transaksi baru disimpan ke database cloud: $description, senilai $formatRp.")
+        announce("Transaksi harian $description ($category) senilai $formatRp berhasil disimpan ke database cloud.")
+    }
+
+    fun editTransaction(
+        transactionId: String,
+        description: String,
+        amount: Double,
+        type: TransactionType,
+        category: String,
+        wallet: String
+    ) {
+        val target = _uiState.value.transactions.find { it.id == transactionId } ?: return
+        val updatedTx = target.copy(
+            description = description.trim(),
+            amount = amount,
+            type = type,
+            category = category.trim(),
+            wallet = wallet.trim()
+        )
+
+        val updatedList = _uiState.value.transactions.map { if (it.id == transactionId) updatedTx else it }
+        _uiState.update { it.copy(transactions = updatedList) }
+        localRepo.saveTransactions(updatedList)
+
+        viewModelScope.launch {
+            try {
+                cloudRepo.updateTransaction(activeUserId, updatedTx)
+            } catch (_: Exception) {}
+        }
+
+        recalculateFinance()
+        announce("Perubahan catatan transaksi ${updatedTx.description} berhasil diperbarui di database cloud.")
     }
 
     fun deleteTransaction(transactionId: String) {
@@ -382,11 +428,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val expense = txs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
         val net = revenue - expense
 
+        // Daily (Hari ini) metrics
+        val todayTxs = txs.filter { it.isToday() }
+        val todayRev = todayTxs.filter { it.type == TransactionType.INCOME || it.type == TransactionType.SALE }.sumOf { it.amount }
+        val todayExp = todayTxs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        val todayNet = todayRev - todayExp
+
         _uiState.update {
             it.copy(
                 totalRevenue = revenue,
                 totalExpense = expense,
-                netBalance = net
+                netBalance = net,
+                todayRevenue = todayRev,
+                todayExpense = todayExp,
+                todayNet = todayNet
             )
         }
     }

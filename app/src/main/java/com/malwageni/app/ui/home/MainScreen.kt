@@ -1,6 +1,7 @@
 package com.malwageni.app.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,8 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +35,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -90,7 +94,9 @@ fun MainScreen(
 
     var showAddProductDialog by remember { mutableStateOf(false) }
     var productToEdit by remember { mutableStateOf<ProductItem?>(null) }
+
     var showAddTransactionDialog by remember { mutableStateOf(false) }
+    var transactionToEdit by remember { mutableStateOf<TransactionItem?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.accessibilityEvents.collect { message ->
@@ -119,7 +125,7 @@ fun MainScreen(
     if (productToEdit != null) {
         val p = productToEdit!!
         ProductFormDialog(
-            title = "Edit Data Produk: ${p.name}",
+            title = "Edit Produk: ${p.name}",
             initialName = p.name,
             initialSku = p.sku,
             initialCostPrice = p.costPrice,
@@ -133,13 +139,37 @@ fun MainScreen(
         )
     }
 
-    // Modal Create Transaction
+    // Modal Create Daily Financial Transaction
     if (showAddTransactionDialog) {
-        AddTransactionDialog(
+        DailyTransactionFormDialog(
+            title = "Catat Keuangan Harian Baru",
+            initialDescription = "",
+            initialAmount = 0.0,
+            initialType = TransactionType.EXPENSE,
+            initialCategory = "Makanan & Minuman",
+            initialWallet = "Tunai",
             onDismiss = { showAddTransactionDialog = false },
-            onSave = { desc, amount, type ->
-                viewModel.addManualTransaction(desc, amount, type)
+            onSave = { desc, amount, type, category, wallet ->
+                viewModel.addManualTransaction(desc, amount, type, category, wallet)
                 showAddTransactionDialog = false
+            }
+        )
+    }
+
+    // Modal Edit Daily Financial Transaction
+    if (transactionToEdit != null) {
+        val tx = transactionToEdit!!
+        DailyTransactionFormDialog(
+            title = "Edit Catatan Keuangan: ${tx.description}",
+            initialDescription = tx.description,
+            initialAmount = tx.amount,
+            initialType = tx.type,
+            initialCategory = tx.category,
+            initialWallet = tx.wallet,
+            onDismiss = { transactionToEdit = null },
+            onSave = { desc, amount, type, category, wallet ->
+                viewModel.editTransaction(tx.id, desc, amount, type, category, wallet)
+                transactionToEdit = null
             }
         )
     }
@@ -226,6 +256,7 @@ fun MainScreen(
                 AppTab.LEDGER -> LedgerTabContent(
                     uiState = uiState,
                     onOpenAddTransaction = { showAddTransactionDialog = true },
+                    onEditTransaction = { transactionToEdit = it },
                     onDeleteTransaction = { viewModel.deleteTransaction(it) }
                 )
             }
@@ -529,7 +560,6 @@ fun InventoryTabContent(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Action Buttons: Edit, Restock, Delete
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,
@@ -565,14 +595,29 @@ fun InventoryTabContent(
     }
 }
 
+/**
+ * Enhanced Daily & Store Financial Management Tab.
+ * Supports daily breakdown, categories, wallets, and full CRUD.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LedgerTabContent(
     uiState: MainUiState,
     onOpenAddTransaction: () -> Unit,
+    onEditTransaction: (TransactionItem) -> Unit,
     onDeleteTransaction: (String) -> Unit
 ) {
     val formatRp = { amount: Double ->
         NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(amount)
+    }
+
+    var selectedFilter by remember { mutableStateOf("Semua") }
+
+    val filteredTransactions = when (selectedFilter) {
+        "Hari Ini" -> uiState.transactions.filter { it.isToday() }
+        "Pengeluaran" -> uiState.transactions.filter { !it.type.isCredit }
+        "Pemasukan" -> uiState.transactions.filter { it.type.isCredit }
+        else -> uiState.transactions
     }
 
     LazyColumn(
@@ -581,56 +626,115 @@ fun LedgerTabContent(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // 1. Daily Overview Card (Ringkasan Keuangan Hari Ini)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics(mergeDescendants = true) {
-                        contentDescription = "Buku Keuangan Cloud. Total pemasukan: ${formatRp(uiState.totalRevenue)}. Total pengeluaran: ${formatRp(uiState.totalExpense)}. Saldo bersih: ${formatRp(uiState.netBalance)}."
+                        contentDescription = "Ringkasan Keuangan Hari Ini. Pemasukan hari ini: ${formatRp(uiState.todayRevenue)}. Pengeluaran hari ini: ${formatRp(uiState.todayExpense)}. Sisa kas hari ini: ${formatRp(uiState.todayNet)}."
+                        liveRegion = LiveRegionMode.Polite
                     },
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Ringkasan Arus Kas (Online)",
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Pemasukan:", style = MaterialTheme.typography.bodyLarge)
-                        Text(formatRp(uiState.totalRevenue), style = MaterialTheme.typography.bodyLarge, color = IncomeGreen)
+                        Text(
+                            text = "Arus Kas Hari Ini",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Box(
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Hari Ini",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Pengeluaran:", style = MaterialTheme.typography.bodyLarge)
-                        Text(formatRp(uiState.totalExpense), style = MaterialTheme.typography.bodyLarge, color = ExpenseRed)
+                        Text("Pemasukan Hari Ini:", style = MaterialTheme.typography.bodyMedium)
+                        Text(formatRp(uiState.todayRevenue), style = MaterialTheme.typography.titleMedium, color = IncomeGreen)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Pengeluaran Hari Ini:", style = MaterialTheme.typography.bodyMedium)
+                        Text(formatRp(uiState.todayExpense), style = MaterialTheme.typography.titleMedium, color = ExpenseRed)
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Saldo Bersih:", style = MaterialTheme.typography.titleMedium)
+                        Text("Sisa Kas Hari Ini:", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            formatRp(uiState.netBalance),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = if (uiState.netBalance >= 0) IncomeGreen else ExpenseRed
+                            formatRp(uiState.todayNet),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = if (uiState.todayNet >= 0) IncomeGreen else ExpenseRed
                         )
                     }
                 }
             }
         }
 
+        // 2. Cumulative Total Balance Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Total Akumulasi Seluruh Waktu. Pemasukan: ${formatRp(uiState.totalRevenue)}. Pengeluaran: ${formatRp(uiState.totalExpense)}. Saldo total: ${formatRp(uiState.netBalance)}."
+                    },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Saldo Kas Keseluruhan", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            formatRp(uiState.netBalance),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (uiState.netBalance >= 0) IncomeGreen else ExpenseRed
+                        )
+                    }
+                    Text(
+                        text = "Total ${uiState.transactions.size} Transaksi",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // 3. Primary Action Button
         item {
             AccessibleActionButton(
-                text = "+ Catat Transaksi Keuangan",
-                contentDescription = "Catat transaksi pemasukan atau pengeluaran baru ke database cloud",
+                text = "+ Catat Keuangan Harian",
+                contentDescription = "Buka formulir untuk mencatat pengeluaran atau pemasukan harian Anda",
                 onClick = onOpenAddTransaction,
                 backgroundColor = MaterialTheme.colorScheme.secondary,
                 icon = Icons.Default.Add,
@@ -638,21 +742,38 @@ fun LedgerTabContent(
             )
         }
 
+        // 4. Filter Chips
         item {
-            Text(
-                text = "Riwayat Catatan Transaksi",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = 8.dp)
-            )
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val filters = listOf("Semua", "Hari Ini", "Pengeluaran", "Pemasukan")
+                items(filters) { filter ->
+                    FilterChip(
+                        selected = selectedFilter == filter,
+                        onClick = { selectedFilter = filter },
+                        label = { Text(filter) },
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .semantics {
+                                role = Role.Tab
+                                selected = selectedFilter == filter
+                                contentDescription = "Filter riwayat $filter"
+                            }
+                    )
+                }
+            }
         }
 
-        if (uiState.transactions.isEmpty()) {
+        // 5. Empty State or List
+        if (filteredTransactions.isEmpty()) {
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics(mergeDescendants = true) {
-                            contentDescription = "Belum ada transaksi di database cloud. Ketuk Catat Transaksi Keuangan di atas untuk menambahkan."
+                            contentDescription = "Belum ada catatan transaksi pada filter $selectedFilter. Ketuk tombol Catat Keuangan Harian di atas."
                         },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     shape = RoundedCornerShape(10.dp)
@@ -660,7 +781,7 @@ fun LedgerTabContent(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp),
+                            .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
@@ -675,7 +796,7 @@ fun LedgerTabContent(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "Transaksi penjualan dari kasir maupun catatan manual Anda akan otomatis tersimpan online di sini.",
+                            text = "Mulai kelola pengeluaran dan pemasukan harian Anda dengan tombol '+ Catat Keuangan Harian' di atas.",
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -684,48 +805,91 @@ fun LedgerTabContent(
                 }
             }
         } else {
-            items(uiState.transactions) { tx ->
+            items(filteredTransactions) { tx ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics(mergeDescendants = true) {
                             contentDescription = tx.getAccessibilityDescription()
                         },
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = tx.description,
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = tx.category,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = tx.wallet,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = tx.formattedDate(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            val prefix = if (tx.type.isCredit) "+ " else "- "
+                            val amountColor = if (tx.type.isCredit) IncomeGreen else ExpenseRed
+
                             Text(
-                                text = tx.description,
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "${tx.type.label} | ${tx.formattedAmount()}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (tx.type.isCredit) IncomeGreen else ExpenseRed
+                                text = "$prefix${tx.formattedAmount()}",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = amountColor
                             )
                         }
 
-                        IconButton(
-                            onClick = { onDeleteTransaction(tx.id) },
-                            modifier = Modifier
-                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-                                .semantics {
-                                    role = Role.Button
-                                    contentDescription = "Hapus catatan transaksi ${tx.description}"
-                                }
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Edit and Delete actions
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = null,
-                                tint = ExpenseRed
+                            AccessibleActionButton(
+                                text = "Edit",
+                                contentDescription = "Edit catatan transaksi ${tx.description}",
+                                onClick = { onEditTransaction(tx) },
+                                icon = Icons.Default.Edit,
+                                backgroundColor = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            AccessibleActionButton(
+                                text = "Hapus",
+                                contentDescription = "Hapus catatan transaksi ${tx.description}",
+                                onClick = { onDeleteTransaction(tx.id) },
+                                icon = Icons.Default.Delete,
+                                backgroundColor = ExpenseRed
                             )
                         }
                     }
@@ -839,22 +1003,39 @@ fun ProductFormDialog(
 }
 
 /**
- * Accessible Dialog to Record a Manual Financial Transaction.
+ * Dialog for Creating and Editing Daily Financial Transactions.
+ * Supports Categories, Wallets, and Type Selection.
  */
 @Composable
-fun AddTransactionDialog(
+fun DailyTransactionFormDialog(
+    title: String,
+    initialDescription: String,
+    initialAmount: Double,
+    initialType: TransactionType,
+    initialCategory: String,
+    initialWallet: String,
     onDismiss: () -> Unit,
-    onSave: (description: String, amount: Double, type: TransactionType) -> Unit
+    onSave: (description: String, amount: Double, type: TransactionType, category: String, wallet: String) -> Unit
 ) {
-    var description by remember { mutableStateOf("") }
-    var amountStr by remember { mutableStateOf("") }
-    var selectedType by remember { mutableStateOf(TransactionType.EXPENSE) }
+    var description by remember { mutableStateOf(initialDescription) }
+    var amountStr by remember { mutableStateOf(if (initialAmount > 0) initialAmount.toInt().toString() else "") }
+    var selectedType by remember { mutableStateOf(if (initialType == TransactionType.SALE) TransactionType.INCOME else initialType) }
+    var selectedCategory by remember { mutableStateOf(initialCategory) }
+    var selectedWallet by remember { mutableStateOf(initialWallet) }
+
+    val categories = if (selectedType == TransactionType.EXPENSE) {
+        listOf("Makanan & Minuman", "Transport & Bensin", "Kebutuhan Rumah", "Pulsa & Listrik", "Tagihan", "Modal Usaha", "Lain-lain")
+    } else {
+        listOf("Gaji & Upah", "Keuntungan Toko", "Uang Saku", "Hasil Penjualan", "Hadiah", "Lain-lain")
+    }
+
+    val wallets = listOf("Tunai", "Transfer Bank", "E-Wallet (Gopay/OVO/Dana)")
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Catat Transaksi Keuangan",
+                text = title,
                 style = MaterialTheme.typography.titleLarge
             )
         },
@@ -865,6 +1046,7 @@ fun AddTransactionDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // Type Selector: Pengeluaran vs Pemasukan
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceAround
@@ -872,12 +1054,18 @@ fun AddTransactionDialog(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clickable { selectedType = TransactionType.EXPENSE }
+                            .clickable {
+                                selectedType = TransactionType.EXPENSE
+                                selectedCategory = "Makanan & Minuman"
+                            }
                             .padding(4.dp)
                     ) {
                         RadioButton(
                             selected = selectedType == TransactionType.EXPENSE,
-                            onClick = { selectedType = TransactionType.EXPENSE }
+                            onClick = {
+                                selectedType = TransactionType.EXPENSE
+                                selectedCategory = "Makanan & Minuman"
+                            }
                         )
                         Text("Pengeluaran")
                     }
@@ -885,12 +1073,18 @@ fun AddTransactionDialog(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clickable { selectedType = TransactionType.INCOME }
+                            .clickable {
+                                selectedType = TransactionType.INCOME
+                                selectedCategory = "Gaji & Upah"
+                            }
                             .padding(4.dp)
                     ) {
                         RadioButton(
                             selected = selectedType == TransactionType.INCOME,
-                            onClick = { selectedType = TransactionType.INCOME }
+                            onClick = {
+                                selectedType = TransactionType.INCOME
+                                selectedCategory = "Gaji & Upah"
+                            }
                         )
                         Text("Pemasukan")
                     }
@@ -899,7 +1093,7 @@ fun AddTransactionDialog(
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Keterangan Transaksi") },
+                    label = { Text("Keterangan (misal: Makan Siang)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -912,17 +1106,57 @@ fun AddTransactionDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                // Category Selection
+                Text("Pilih Kategori:", style = MaterialTheme.typography.labelLarge)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    categories.forEach { cat ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedCategory = cat }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = cat }
+                            )
+                            Text(cat, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+
+                // Wallet Selection
+                Text("Sumber Dana / Dompet:", style = MaterialTheme.typography.labelLarge)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    wallets.forEach { wal ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedWallet = wal }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = selectedWallet == wal,
+                                onClick = { selectedWallet = wal }
+                            )
+                            Text(wal, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     val amount = amountStr.toDoubleOrNull() ?: 0.0
-                    onSave(description, amount, selectedType)
+                    onSave(description, amount, selectedType, selectedCategory, selectedWallet)
                 },
                 modifier = Modifier.defaultMinSize(minHeight = 48.dp)
             ) {
-                Text("Simpan Transaksi", style = MaterialTheme.typography.labelLarge)
+                Text("Simpan", style = MaterialTheme.typography.labelLarge)
             }
         },
         dismissButton = {
