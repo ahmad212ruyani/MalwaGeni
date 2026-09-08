@@ -22,6 +22,14 @@ android {
     }
 
     signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
         create("release") {
             // Can be populated via Environment Variables / GitHub Secrets
             val keystoreFile = System.getenv("KEYSTORE_FILE")
@@ -48,6 +56,7 @@ android {
         }
         debug {
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

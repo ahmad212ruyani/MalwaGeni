@@ -1,5 +1,8 @@
 package com.malwageni.app.ui.auth
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -70,6 +74,17 @@ fun LoginScreen(
     val uiState by authViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
+
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            authViewModel.handleGoogleSignInIntentResult(result.data)
+        } else {
+            authViewModel.handleGoogleSignInIntentResult(null)
+        }
+    }
 
     // Pre-resolve strings at Composable level
     val googleSignInA11y = stringResource(R.string.a11y_google_sign_in)
@@ -141,11 +156,44 @@ fun LoginScreen(
                 contentDescription = googleSignInA11y,
                 onClick = {
                     focusManager.clearFocus()
-                    authViewModel.signInWithGoogle()
+                    authViewModel.signInWithGoogle(
+                        activityContext = context,
+                        onFallbackIntent = { intent ->
+                            googleSignInLauncher.launch(intent)
+                        }
+                    )
                 },
                 icon = Icons.Default.AccountCircle,
                 modifier = Modifier.fillMaxWidth()
             )
+
+            if (uiState.errorMessage != null && uiState.errorMessage!!.contains("Google", ignoreCase = true)) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        focusManager.clearFocus()
+                        authViewModel.launchDirectGoogleSignIn(
+                            activityContext = context,
+                            onFallbackIntent = { intent ->
+                                googleSignInLauncher.launch(intent)
+                            }
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
+                        .semantics {
+                            role = Role.Button
+                            contentDescription = "Coba Google Sign-In Alternatif. Ketuk jika tombol Google pertama mengalami kendala."
+                        },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = "Coba Google Sign-In Alternatif",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
 

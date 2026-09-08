@@ -1,12 +1,17 @@
 package com.malwageni.app.auth
 
 import android.content.Context
+import android.content.Intent
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetCredentialResponse
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInClient
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.FirebaseException
@@ -23,17 +28,30 @@ sealed class AuthResult {
     data class Success(val user: UserAccount) : AuthResult()
     data class Error(val message: String) : AuthResult()
     object Cancelled : AuthResult()
+    object AwaitingIntent : AuthResult()
 }
 
 class FirebaseAuthManager(private val context: Context) {
 
     private val firebaseAuth: FirebaseAuth = FirebaseAuth.getInstance()
-    private val credentialManager = CredentialManager.create(context)
 
-    suspend fun signInWithGoogle(): AuthResult {
-        return try {
-            val serverClientId = context.getString(R.string.default_web_client_id)
+    fun getGoogleSignInClient(activityContext: Context): GoogleSignInClient {
+        val serverClientId = activityContext.getString(R.string.default_web_client_id)
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(serverClientId)
+            .requestEmail()
+            .build()
+        return GoogleSignIn.getClient(activityContext, gso)
+    }
 
+    suspend fun signInWithGoogle(
+        activityContext: Context,
+        onFallbackIntent: (Intent) -> Unit
+    ): AuthResult {
+        val serverClientId = activityContext.getString(R.string.default_web_client_id)
+
+        try {
+            val credManager = CredentialManager.create(activityContext)
             val googleIdOption = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)
                 .setServerClientId(serverClientId)
@@ -44,13 +62,13 @@ class FirebaseAuthManager(private val context: Context) {
                 .addCredentialOption(googleIdOption)
                 .build()
 
-            // Max 15 seconds timeout for selecting Google Account
+            // Max 15 seconds timeout for Credential Manager
             val response: GetCredentialResponse? = withTimeoutOrNull(15000L) {
-                credentialManager.getCredential(request = request, context = context)
+                credManager.getCredential(request = request, context = activityContext)
             }
 
             if (response == null) {
-                return AuthResult.Error("Waktu pemilihan akun Google habis. Silakan coba kembali atau gunakan Mode Tamu.")
+                return launchGoogleSignInIntent(activityContext, onFallbackIntent)
             }
 
             val credential = response.credential
@@ -75,9 +93,8 @@ class FirebaseAuthManager(private val context: Context) {
                         profilePictureUrl = firebaseUser.photoUrl?.toString() ?: googleIdTokenCredential.profilePictureUri?.toString(),
                         isAnonymous = false
                     )
-                    AuthResult.Success(user)
+                    return AuthResult.Success(user)
                 } else {
-                    // Fallback to Google Id info directly so user is never stuck
                     val fallbackUser = UserAccount(
                         id = googleIdTokenCredential.id,
                         displayName = googleIdTokenCredential.displayName ?: "Pengguna Google",
@@ -85,24 +102,84 @@ class FirebaseAuthManager(private val context: Context) {
                         profilePictureUrl = googleIdTokenCredential.profilePictureUri?.toString(),
                         isAnonymous = false
                     )
-                    AuthResult.Success(fallbackUser)
+                    return AuthResult.Success(fallbackUser)
                 }
             } else {
-                AuthResult.Error("Kredensial tidak dikenali.")
+                return launchGoogleSignInIntent(activityContext, onFallbackIntent)
             }
         } catch (e: GetCredentialCancellationException) {
-            AuthResult.Cancelled
-        } catch (e: GetCredentialException) {
-            AuthResult.Error("Google Play Services: ${e.localizedMessage ?: "Gagal memuat akun Google"}")
-        } catch (e: FirebaseAuthException) {
-            val msg = if (e.errorCode == "ERROR_OPERATION_NOT_ALLOWED" || e.message?.contains("disabled", ignoreCase = true) == true) {
-                "Google Sign-In belum diaktifkan di Firebase Console (Authentication > Sign-in method). Silakan aktifkan terlebih dahulu."
-            } else {
-                e.localizedMessage ?: "Terjadi kendala autentikasi Firebase."
-            }
-            AuthResult.Error(msg)
+            return AuthResult.Cancelled
         } catch (e: Exception) {
-            AuthResult.Error("Kendala: ${e.localizedMessage ?: "Gagal terhubung"}")
+            // When Credential Manager fails with NoCredentialException or any other error,
+            // immediately trigger legacy GoogleSignInClient picker fallback!
+            return launchGoogleSignInIntent(activityContext, onFallbackIntent)
+        }
+    }
+
+    fun launchGoogleSignInIntent(
+        activityContext: Context,
+        onFallbackIntent: (Intent) -> Unit
+    ): AuthResult {
+        return try {
+            val client = getGoogleSignInClient(activityContext)
+            try {
+                client.signOut()
+            } catch (_: Exception) {}
+            onFallbackIntent(client.signInIntent)
+            AuthResult.AwaitingIntent
+        } catch (e: Exception) {
+            AuthResult.Error("Gagal membuka akun Google: ${e.localizedMessage ?: "Terjadi kendala"}")
+        }
+    }
+
+    suspend fun handleGoogleSignInIntentResult(data: Intent?): AuthResult {
+        if (data == null) {
+            return AuthResult.Cancelled
+        }
+        return try {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(data)
+            val account = task.getResult(ApiException::class.java)
+            val idToken = account?.idToken
+
+            if (idToken.isNullOrBlank()) {
+                return AuthResult.Error("Token Google tidak ditemukan. Pastikan akun Google terhubung di perangkat Anda.")
+            }
+
+            val authCredential = GoogleAuthProvider.getCredential(idToken, null)
+            val authResult = withTimeoutOrNull(10000L) {
+                firebaseAuth.signInWithCredential(authCredential).await()
+            }
+
+            if (authResult?.user != null) {
+                val fbUser = authResult.user!!
+                val user = UserAccount(
+                    id = fbUser.uid,
+                    displayName = fbUser.displayName ?: account.displayName ?: "Pengguna Google",
+                    email = fbUser.email ?: account.email ?: "",
+                    profilePictureUrl = fbUser.photoUrl?.toString() ?: account.photoUrl?.toString(),
+                    isAnonymous = false
+                )
+                AuthResult.Success(user)
+            } else {
+                val fallbackUser = UserAccount(
+                    id = account.id ?: "google_user",
+                    displayName = account.displayName ?: "Pengguna Google",
+                    email = account.email ?: "",
+                    profilePictureUrl = account.photoUrl?.toString(),
+                    isAnonymous = false
+                )
+                AuthResult.Success(fallbackUser)
+            }
+        } catch (e: ApiException) {
+            when (e.statusCode) {
+                12501 -> AuthResult.Cancelled
+                12500 -> AuthResult.Error("Google Sign-In belum diaktifkan di Firebase Console (Status 12500). Buka Firebase Console > Authentication > Sign-in method, aktifkan Google dan pilih Project support email.")
+                10 -> AuthResult.Error("Konfigurasi aplikasi di Firebase belum cocok (DEVELOPER_ERROR: Kode 10). Pastikan SHA-1 Keystore (BF:70:67:46:28:BE:E5:D6:3F:CB:32:41:DF:95:F2:4F:C5:BB:8F:30) terdaftar di Firebase Console.")
+                7 -> AuthResult.Error("Koneksi jaringan bermasalah saat menghubungkan ke Google Play Services.")
+                else -> AuthResult.Error("Google Play Services (Kode ${e.statusCode}): ${e.localizedMessage ?: "Gagal memproses login"}")
+            }
+        } catch (e: Exception) {
+            AuthResult.Error("Gagal autentikasi Google: ${e.localizedMessage ?: "Terjadi kesalahan"}")
         }
     }
 

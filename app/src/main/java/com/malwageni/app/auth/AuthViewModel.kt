@@ -1,6 +1,8 @@
 package com.malwageni.app.auth
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.malwageni.app.accessibility.AccessibilityUtils
@@ -50,12 +52,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun signInWithGoogle() {
+    fun signInWithGoogle(activityContext: Context, onFallbackIntent: (Intent) -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            announce("Membuka pilihan akun Google. Silakan pilih akun Anda.")
+            announce("Menghubungkan ke layanan Akun Google...")
 
-            when (val result = authManager.signInWithGoogle()) {
+            when (val result = authManager.signInWithGoogle(activityContext, onFallbackIntent)) {
                 is AuthResult.Success -> {
                     _uiState.update { it.copy(currentUser = result.user, isLoading = false) }
                     announce("Berhasil masuk menggunakan akun Google: ${result.user.displayName}. Data toko Anda tersinkronkan ke Firebase Cloud.")
@@ -68,6 +70,40 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update { it.copy(isLoading = false) }
                     announce("Masuk dengan Google dibatalkan.")
                 }
+                is AuthResult.AwaitingIntent -> {
+                    announce("Membuka daftar akun Google. Silakan pilih akun Anda.")
+                }
+            }
+        }
+    }
+
+    fun launchDirectGoogleSignIn(activityContext: Context, onFallbackIntent: (Intent) -> Unit) {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        announce("Membuka pilihan akun Google...")
+        val result = authManager.launchGoogleSignInIntent(activityContext, onFallbackIntent)
+        if (result is AuthResult.Error) {
+            _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+            announce("Gagal membuka akun Google: ${result.message}")
+        }
+    }
+
+    fun handleGoogleSignInIntentResult(data: Intent?) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            when (val result = authManager.handleGoogleSignInIntentResult(data)) {
+                is AuthResult.Success -> {
+                    _uiState.update { it.copy(currentUser = result.user, isLoading = false) }
+                    announce("Berhasil masuk menggunakan akun Google: ${result.user.displayName}. Data toko Anda tersinkronkan ke Firebase Cloud.")
+                }
+                is AuthResult.Error -> {
+                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+                    announce("Gagal masuk akun Google: ${result.message}")
+                }
+                is AuthResult.Cancelled -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                    announce("Pemilihan akun Google dibatalkan.")
+                }
+                is AuthResult.AwaitingIntent -> {}
             }
         }
     }
@@ -96,6 +132,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 is AuthResult.Cancelled -> {
                     _uiState.update { it.copy(isLoading = false) }
                 }
+                is AuthResult.AwaitingIntent -> {}
             }
         }
     }
@@ -130,6 +167,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 is AuthResult.Cancelled -> {
                     _uiState.update { it.copy(isLoading = false) }
                 }
+                is AuthResult.AwaitingIntent -> {}
             }
         }
     }
