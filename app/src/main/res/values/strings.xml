@@ -14,8 +14,12 @@
     <string name="a11y_action_add_transaction">Catat Transaksi Keuangan Baru</string>
 
     <!-- Google Sign-In & Auth -->
-    <string name="default_web_client_id">YOUR_WEB_CLIENT_ID_HERE</string>
+    <string name="default_web_client_id">1099120084098-i4trkv4jc1cf4vu55ie36k4kb2vt4h8h.apps.googleusercontent.com</string>
     <string name="a11y_google_sign_in">Tombol Masuk dengan Akun Google. Masuk untuk menyinkronkan data kasir dan keuangan Anda ke cloud secara aman.</string>
+    <string name="a11y_email_input">Kolom input alamat email</string>
+    <string name="a11y_password_input">Kolom input kata sandi</string>
+    <string name="a11y_sign_in_email_button">Tombol Masuk dengan Email dan Kata Sandi</string>
+    <string name="a11y_register_email_button">Tombol Daftar Akun Baru dengan Email</string>
     <string name="a11y_guest_sign_in">Tombol Masuk Mode Tamu. Uji coba aplikasi tanpa akun secara offline.</string>
     <string name="a11y_sign_out">Tombol Keluar Akun. Keluar dari sesi akun saat ini.</string>
 </resources>

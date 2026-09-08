@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -8,7 +9,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.malwageni.app"
+        applicationId = "com.ahmad212ruyani.malwageni"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -46,7 +47,6 @@ android {
             }
         }
         debug {
-            applicationIdSuffix = ".debug"
             isDebuggable = true
         }
     }
@@ -92,6 +92,11 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Firebase (BOM, Auth)
+    implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
 
     // Google Credential Manager (Google Sign-In)
     implementation("androidx.credentials:credentials:1.3.0")

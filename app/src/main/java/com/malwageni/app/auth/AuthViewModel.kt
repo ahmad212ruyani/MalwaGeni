@@ -1,7 +1,6 @@
 package com.malwageni.app.auth
 
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.malwageni.app.accessibility.AccessibilityUtils
@@ -18,13 +17,13 @@ import kotlinx.coroutines.launch
 data class AuthUiState(
     val currentUser: UserAccount? = null,
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val isSignUpMode: Boolean = false
 )
 
 class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val authManager = GoogleAuthManager(application)
-    private val prefs = application.getSharedPreferences("malwageni_auth_prefs", Context.MODE_PRIVATE)
+    private val authManager = FirebaseAuthManager(application)
 
     private val _uiState = MutableStateFlow(AuthUiState())
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
@@ -37,40 +36,99 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun restorePersistedSession() {
-        val savedUserId = prefs.getString("user_id", null)
-        val savedName = prefs.getString("user_name", null)
-        val savedEmail = prefs.getString("user_email", null)
-        val isAnonymous = prefs.getBoolean("is_anonymous", false)
+        val currentFbUser = authManager.getCurrentFirebaseUser()
+        if (currentFbUser != null) {
+            _uiState.update { it.copy(currentUser = currentFbUser) }
+        }
+    }
 
-        if (savedUserId != null && savedName != null && savedEmail != null) {
-            val restoredUser = UserAccount(
-                id = savedUserId,
-                displayName = savedName,
-                email = savedEmail,
-                isAnonymous = isAnonymous
-            )
-            _uiState.update { it.copy(currentUser = restoredUser) }
+    fun toggleAuthMode() {
+        _uiState.update {
+            val newMode = !it.isSignUpMode
+            announce(if (newMode) "Beralih ke formulir Pendaftaran Akun Baru" else "Beralih ke formulir Masuk dengan Akun")
+            it.copy(isSignUpMode = newMode, errorMessage = null)
         }
     }
 
     fun signInWithGoogle() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            announce("Membuka dialog akun Google. Silakan pilih akun Anda.")
+            announce("Membuka pilihan akun Google. Silakan pilih akun Anda.")
 
             when (val result = authManager.signInWithGoogle()) {
                 is AuthResult.Success -> {
-                    persistSession(result.user)
                     _uiState.update { it.copy(currentUser = result.user, isLoading = false) }
-                    announce("Berhasil masuk sebagai ${result.user.displayName}. Data toko dan keuangan Anda tersinkronisasi.")
+                    announce("Berhasil masuk menggunakan akun Google: ${result.user.displayName}. Data toko Anda tersinkronkan ke Firebase Cloud.")
                 }
                 is AuthResult.Error -> {
                     _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
-                    announce("Gagal masuk: ${result.message}")
+                    announce("Gagal masuk akun Google: ${result.message}")
                 }
                 is AuthResult.Cancelled -> {
                     _uiState.update { it.copy(isLoading = false) }
-                    announce("Proses masuk dengan akun Google dibatalkan.")
+                    announce("Masuk dengan Google dibatalkan.")
+                }
+            }
+        }
+    }
+
+    fun signInWithEmail(email: String, pass: String) {
+        if (email.isBlank() || pass.isBlank()) {
+            val err = "Email dan kata sandi wajib diisi."
+            _uiState.update { it.copy(errorMessage = err) }
+            announce(err)
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            announce("Memverifikasi akun email...")
+
+            when (val result = authManager.signInWithEmail(email, pass)) {
+                is AuthResult.Success -> {
+                    _uiState.update { it.copy(currentUser = result.user, isLoading = false) }
+                    announce("Berhasil masuk sebagai ${result.user.displayName}. Selamat datang kembali.")
+                }
+                is AuthResult.Error -> {
+                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+                    announce(result.message)
+                }
+                is AuthResult.Cancelled -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                }
+            }
+        }
+    }
+
+    fun signUpWithEmail(email: String, pass: String, name: String) {
+        if (email.isBlank() || pass.isBlank() || name.isBlank()) {
+            val err = "Nama, email, dan kata sandi wajib diisi."
+            _uiState.update { it.copy(errorMessage = err) }
+            announce(err)
+            return
+        }
+        if (pass.length < 6) {
+            val err = "Kata sandi minimal 6 karakter."
+            _uiState.update { it.copy(errorMessage = err) }
+            announce(err)
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            announce("Mendaftarkan akun baru ke Firebase Cloud...")
+
+            when (val result = authManager.signUpWithEmail(email, pass, name)) {
+                is AuthResult.Success -> {
+                    _uiState.update { it.copy(currentUser = result.user, isLoading = false) }
+                    announce("Pendaftaran berhasil! Selamat datang, ${result.user.displayName}.")
+                }
+                is AuthResult.Error -> {
+                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+                    announce(result.message)
+                }
+                is AuthResult.Cancelled -> {
+                    _uiState.update { it.copy(isLoading = false) }
                 }
             }
         }
@@ -78,32 +136,29 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     fun continueAsGuest() {
         viewModelScope.launch {
-            val guest = authManager.createGuestSession()
-            persistSession(guest)
-            _uiState.update { it.copy(currentUser = guest, isLoading = false) }
-            announce("Masuk sebagai mode tamu uji coba offline. Fitur kasir, stok, dan keuangan aktif di memori perangkat.")
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            announce("Menyiapkan sesi tamu...")
+            when (val result = authManager.signInAnonymously()) {
+                is AuthResult.Success -> {
+                    _uiState.update { it.copy(currentUser = result.user, isLoading = false) }
+                    announce("Masuk sebagai mode tamu uji coba offline. Semua fitur kasir dan stok dapat digunakan.")
+                }
+                is AuthResult.Error -> {
+                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+                }
+                is AuthResult.Cancelled -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                }
+            }
         }
     }
 
     fun signOut() {
         viewModelScope.launch {
-            clearSession()
+            authManager.signOut()
             _uiState.update { it.copy(currentUser = null) }
-            announce("Anda telah keluar dari akun. Silakan masuk kembali untuk mengakses data cloud.")
+            announce("Anda telah keluar dari akun. Silakan masuk kembali untuk mengakses data toko.")
         }
-    }
-
-    private fun persistSession(user: UserAccount) {
-        prefs.edit()
-            .putString("user_id", user.id)
-            .putString("user_name", user.displayName)
-            .putString("user_email", user.email)
-            .putBoolean("is_anonymous", user.isAnonymous)
-            .apply()
-    }
-
-    private fun clearSession() {
-        prefs.edit().clear().apply()
     }
 
     private fun announce(message: String) {
