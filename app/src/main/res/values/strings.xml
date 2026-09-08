@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MalwaGeni</string>
+    <string name="app_description">Sistem Kasir, Stok, dan Keuangan Pribadi Ramah Tunanetra</string>
+    
+    <!-- Accessibility Labels -->
+    <string name="a11y_online_status">Status jaringan: Terhubung ke internet. Data tersinkronisasi.</string>
+    <string name="a11y_offline_status">Status jaringan: Offline. Menggunakan penyimpanan lokal sementara.</string>
+    <string name="a11y_tab_pos">Tab Kasir. Ketuk untuk membuka menu transaksi penjualan.</string>
+    <string name="a11y_tab_inventory">Tab Stok Barang. Ketuk untuk mengelola katalog dan persediaan produk.</string>
+    <string name="a11y_tab_ledger">Tab Keuangan Pribadi. Ketuk untuk melihat arus kas dan pembukuan.</string>
+    <string name="a11y_action_checkout">Lanjutkan Pembayaran Kasir</string>
+    <string name="a11y_action_add_product">Tambah Produk Baru ke Gudang</string>
+    <string name="a11y_action_add_transaction">Catat Transaksi Keuangan Baru</string>
+</resources>
