@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.AlertDialog
@@ -65,12 +66,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.malwageni.app.model.ProductItem
+import com.malwageni.app.model.TransactionItem
 import com.malwageni.app.model.TransactionType
 import com.malwageni.app.model.UserAccount
 import com.malwageni.app.ui.components.AccessibleActionButton
 import com.malwageni.app.ui.components.AccessibleNetworkStatusBar
 import com.malwageni.app.ui.components.AccessibleProductCard
-import com.malwageni.app.ui.components.AccessibleTransactionCard
 import com.malwageni.app.ui.theme.ExpenseRed
 import com.malwageni.app.ui.theme.IncomeGreen
 import java.text.NumberFormat
@@ -88,6 +89,7 @@ fun MainScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showAddProductDialog by remember { mutableStateOf(false) }
+    var productToEdit by remember { mutableStateOf<ProductItem?>(null) }
     var showAddTransactionDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -96,8 +98,15 @@ fun MainScreen(
         }
     }
 
+    // Modal Create Product
     if (showAddProductDialog) {
-        AddProductDialog(
+        ProductFormDialog(
+            title = "Tambah Produk Baru",
+            initialName = "",
+            initialSku = "",
+            initialCostPrice = 0.0,
+            initialSellPrice = 0.0,
+            initialStock = 0,
             onDismiss = { showAddProductDialog = false },
             onSave = { name, sku, cost, sell, stock ->
                 viewModel.addNewProduct(name, sku, cost, sell, stock)
@@ -106,6 +115,25 @@ fun MainScreen(
         )
     }
 
+    // Modal Update (Edit) Product
+    if (productToEdit != null) {
+        val p = productToEdit!!
+        ProductFormDialog(
+            title = "Edit Data Produk: ${p.name}",
+            initialName = p.name,
+            initialSku = p.sku,
+            initialCostPrice = p.costPrice,
+            initialSellPrice = p.sellPrice,
+            initialStock = p.stockQuantity,
+            onDismiss = { productToEdit = null },
+            onSave = { name, sku, cost, sell, stock ->
+                viewModel.editProduct(p.id, name, sku, cost, sell, stock)
+                productToEdit = null
+            }
+        )
+    }
+
+    // Modal Create Transaction
     if (showAddTransactionDialog) {
         AddTransactionDialog(
             onDismiss = { showAddTransactionDialog = false },
@@ -129,7 +157,7 @@ fun MainScreen(
                         )
                         if (currentUser != null) {
                             Text(
-                                text = currentUser.displayName,
+                                text = "${currentUser.displayName} (Online Cloud)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
                             )
@@ -161,7 +189,7 @@ fun MainScreen(
                 ),
                 modifier = Modifier.semantics {
                     val userDesc = currentUser?.getAccessibilityDescription() ?: ""
-                    contentDescription = "Aplikasi MalwaGeni. $userDesc"
+                    contentDescription = "Aplikasi MalwaGeni. Terhubung ke Cloud Firestore. $userDesc"
                 }
             )
         }
@@ -191,12 +219,14 @@ fun MainScreen(
                 AppTab.INVENTORY -> InventoryTabContent(
                     uiState = uiState,
                     onRestock = { viewModel.restockProduct(it) },
+                    onEdit = { productToEdit = it },
                     onDelete = { viewModel.deleteProduct(it) },
                     onOpenAddProduct = { showAddProductDialog = true }
                 )
                 AppTab.LEDGER -> LedgerTabContent(
                     uiState = uiState,
-                    onOpenAddTransaction = { showAddTransactionDialog = true }
+                    onOpenAddTransaction = { showAddTransactionDialog = true },
+                    onDeleteTransaction = { viewModel.deleteTransaction(it) }
                 )
             }
         }
@@ -346,7 +376,7 @@ fun PosTabContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics(mergeDescendants = true) {
-                            contentDescription = "Katalog kasir masih kosong. Silakan buka menu Stok Barang untuk menambahkan produk."
+                            contentDescription = "Katalog kasir masih kosong. Silakan buka menu Stok Barang untuk menambahkan produk pertama Anda."
                         },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     shape = RoundedCornerShape(10.dp)
@@ -369,7 +399,7 @@ fun PosTabContent(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "Katalog Anda masih kosong. Buka tab Stok Barang untuk menambah produk toko Anda sendiri.",
+                            text = "Katalog cloud Anda masih kosong. Buka tab Stok Barang untuk menambah produk toko Anda sendiri.",
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -398,6 +428,7 @@ fun PosTabContent(
 fun InventoryTabContent(
     uiState: MainUiState,
     onRestock: (String) -> Unit,
+    onEdit: (ProductItem) -> Unit,
     onDelete: (String) -> Unit,
     onOpenAddProduct: () -> Unit
 ) {
@@ -408,29 +439,23 @@ fun InventoryTabContent(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Katalog & Manajemen Stok",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "Total ${uiState.products.size} produk terdaftar di database.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            Column {
+                Text(
+                    text = "Katalog & Manajemen Stok (Cloud Database)",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "Total ${uiState.products.size} produk tersinkronisasi di server online.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
         item {
             AccessibleActionButton(
                 text = "+ Tambah Produk Baru",
-                contentDescription = "Tombol Tambah Produk Baru. Buka formulir untuk memasukkan barang dagangan Anda sendiri.",
+                contentDescription = "Tombol Tambah Produk Baru ke Cloud Database.",
                 onClick = onOpenAddProduct,
                 icon = Icons.Default.Add,
                 modifier = Modifier.fillMaxWidth()
@@ -443,7 +468,7 @@ fun InventoryTabContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics(mergeDescendants = true) {
-                            contentDescription = "Gudang stok masih kosong. Ketuk tombol Tambah Produk Baru di atas untuk mulai mengisi barang Anda."
+                            contentDescription = "Gudang stok online masih kosong. Ketuk tombol Tambah Produk Baru di atas untuk membuat produk Anda."
                         },
                     shape = RoundedCornerShape(10.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -455,12 +480,12 @@ fun InventoryTabContent(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Stok Gudang Bersih & Kosong",
+                            text = "Database Online Bersih & Kosong",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Tidak ada data tiruan (dummy). Anda dapat mengisi katalog toko Anda sendiri menggunakan tombol '+ Tambah Produk Baru' di atas.",
+                            text = "Tidak ada produk dummy. Anda dapat membuat, mengubah (edit), dan menghapus produk Anda sendiri.",
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -504,20 +529,30 @@ fun InventoryTabContent(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        // Action Buttons: Edit, Restock, Delete
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             AccessibleActionButton(
-                                text = "+10 Stok",
+                                text = "Edit",
+                                contentDescription = "Edit data produk ${product.name}",
+                                onClick = { onEdit(product) },
+                                icon = Icons.Default.Edit,
+                                backgroundColor = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            AccessibleActionButton(
+                                text = "+10",
                                 contentDescription = "Tambah 10 unit stok untuk ${product.name}",
                                 onClick = { onRestock(product.id) },
                                 icon = Icons.Default.Add
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             AccessibleActionButton(
                                 text = "Hapus",
-                                contentDescription = "Hapus produk ${product.name} dari database",
+                                contentDescription = "Hapus produk ${product.name} dari database cloud",
                                 onClick = { onDelete(product.id) },
                                 icon = Icons.Default.Delete,
                                 backgroundColor = ExpenseRed
@@ -533,7 +568,8 @@ fun InventoryTabContent(
 @Composable
 fun LedgerTabContent(
     uiState: MainUiState,
-    onOpenAddTransaction: () -> Unit
+    onOpenAddTransaction: () -> Unit,
+    onDeleteTransaction: (String) -> Unit
 ) {
     val formatRp = { amount: Double ->
         NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(amount)
@@ -550,14 +586,14 @@ fun LedgerTabContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics(mergeDescendants = true) {
-                        contentDescription = "Buku Keuangan. Total pemasukan: ${formatRp(uiState.totalRevenue)}. Total pengeluaran: ${formatRp(uiState.totalExpense)}. Saldo bersih: ${formatRp(uiState.netBalance)}."
+                        contentDescription = "Buku Keuangan Cloud. Total pemasukan: ${formatRp(uiState.totalRevenue)}. Total pengeluaran: ${formatRp(uiState.totalExpense)}. Saldo bersih: ${formatRp(uiState.netBalance)}."
                     },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Ringkasan Arus Kas",
+                        text = "Ringkasan Arus Kas (Online)",
                         style = MaterialTheme.typography.titleLarge
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -594,7 +630,7 @@ fun LedgerTabContent(
         item {
             AccessibleActionButton(
                 text = "+ Catat Transaksi Keuangan",
-                contentDescription = "Catat transaksi pemasukan atau pengeluaran keuangan baru Anda",
+                contentDescription = "Catat transaksi pemasukan atau pengeluaran baru ke database cloud",
                 onClick = onOpenAddTransaction,
                 backgroundColor = MaterialTheme.colorScheme.secondary,
                 icon = Icons.Default.Add,
@@ -616,7 +652,7 @@ fun LedgerTabContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics(mergeDescendants = true) {
-                            contentDescription = "Belum ada transaksi yang dicatat. Ketuk Catat Transaksi Keuangan di atas untuk menambahkan."
+                            contentDescription = "Belum ada transaksi di database cloud. Ketuk Catat Transaksi Keuangan di atas untuk menambahkan."
                         },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     shape = RoundedCornerShape(10.dp)
@@ -639,7 +675,7 @@ fun LedgerTabContent(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "Transaksi penjualan dari kasir maupun catatan manual Anda akan otomatis tersimpan di sini.",
+                            text = "Transaksi penjualan dari kasir maupun catatan manual Anda akan otomatis tersimpan online di sini.",
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -649,31 +685,81 @@ fun LedgerTabContent(
             }
         } else {
             items(uiState.transactions) { tx ->
-                AccessibleTransactionCard(transaction = tx)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = tx.getAccessibilityDescription()
+                        },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = tx.description,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "${tx.type.label} | ${tx.formattedAmount()}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (tx.type.isCredit) IncomeGreen else ExpenseRed
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { onDeleteTransaction(tx.id) },
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                .semantics {
+                                    role = Role.Button
+                                    contentDescription = "Hapus catatan transaksi ${tx.description}"
+                                }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = ExpenseRed
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 /**
- * Accessible Dialog to Add a New Custom Product.
+ * Universal Dialog for Creating and Editing Products (Full CRUD).
  */
 @Composable
-fun AddProductDialog(
+fun ProductFormDialog(
+    title: String,
+    initialName: String,
+    initialSku: String,
+    initialCostPrice: Double,
+    initialSellPrice: Double,
+    initialStock: Int,
     onDismiss: () -> Unit,
     onSave: (name: String, sku: String, costPrice: Double, sellPrice: Double, initialStock: Int) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var sku by remember { mutableStateOf("") }
-    var costPriceStr by remember { mutableStateOf("") }
-    var sellPriceStr by remember { mutableStateOf("") }
-    var stockStr by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(initialName) }
+    var sku by remember { mutableStateOf(initialSku) }
+    var costPriceStr by remember { mutableStateOf(if (initialCostPrice > 0) initialCostPrice.toInt().toString() else "") }
+    var sellPriceStr by remember { mutableStateOf(if (initialSellPrice > 0) initialSellPrice.toInt().toString() else "") }
+    var stockStr by remember { mutableStateOf(if (initialStock > 0) initialStock.toString() else "") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Tambah Produk Baru",
+                text = title,
                 style = MaterialTheme.typography.titleLarge
             )
         },
@@ -721,7 +807,7 @@ fun AddProductDialog(
                 OutlinedTextField(
                     value = stockStr,
                     onValueChange = { stockStr = it },
-                    label = { Text("Jumlah Stok Awal") },
+                    label = { Text("Jumlah Stok") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -738,7 +824,7 @@ fun AddProductDialog(
                 },
                 modifier = Modifier.defaultMinSize(minHeight = 48.dp)
             ) {
-                Text("Simpan Produk", style = MaterialTheme.typography.labelLarge)
+                Text("Simpan", style = MaterialTheme.typography.labelLarge)
             }
         },
         dismissButton = {

@@ -93,9 +93,10 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // Firebase (BOM, Auth)
+    // Firebase (BOM, Auth, Firestore Online Database)
     implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
     implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
     implementation("com.google.android.gms:play-services-auth:21.2.0")
 
     // Google Credential Manager (Google Sign-In)

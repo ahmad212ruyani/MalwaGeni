@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.malwageni.app.auth.AuthViewModel
@@ -27,16 +28,24 @@ class MainActivity : ComponentActivity() {
             MalwaGeniTheme {
                 val authUiState by authViewModel.uiState.collectAsState()
 
+                val currentUser = authUiState.currentUser
+
+                LaunchedEffect(currentUser?.id) {
+                    if (currentUser != null) {
+                        mainViewModel.setUserSession(currentUser.id)
+                    }
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (authUiState.currentUser == null) {
+                    if (currentUser == null) {
                         LoginScreen(authViewModel = authViewModel)
                     } else {
                         MainScreen(
                             viewModel = mainViewModel,
-                            currentUser = authUiState.currentUser,
+                            currentUser = currentUser,
                             onSignOut = { authViewModel.signOut() }
                         )
                     }
