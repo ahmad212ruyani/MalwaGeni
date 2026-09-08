@@ -8,23 +8,38 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.malwageni.app.auth.AuthViewModel
+import com.malwageni.app.ui.auth.LoginScreen
 import com.malwageni.app.ui.home.MainScreen
 import com.malwageni.app.ui.home.MainViewModel
 import com.malwageni.app.ui.theme.MalwaGeniTheme
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: MainViewModel by viewModels()
+    private val authViewModel: AuthViewModel by viewModels()
+    private val mainViewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MalwaGeniTheme {
+                val authUiState by authViewModel.uiState.collectAsState()
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainScreen(viewModel = viewModel)
+                    if (authUiState.currentUser == null) {
+                        LoginScreen(authViewModel = authViewModel)
+                    } else {
+                        MainScreen(
+                            viewModel = mainViewModel,
+                            currentUser = authUiState.currentUser,
+                            onSignOut = { authViewModel.signOut() }
+                        )
+                    }
                 }
             }
         }

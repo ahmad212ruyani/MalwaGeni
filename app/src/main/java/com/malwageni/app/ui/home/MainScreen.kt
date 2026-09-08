@@ -60,10 +60,16 @@ import com.malwageni.app.ui.theme.IncomeGreen
 import java.text.NumberFormat
 import java.util.Locale
 
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material3.IconButton
+import com.malwageni.app.model.UserAccount
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
+    currentUser: UserAccount?,
+    onSignOut: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -81,17 +87,46 @@ fun MainScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "MalwaGeni",
-                        style = MaterialTheme.typography.titleLarge
-                    )
+                    Column {
+                        Text(
+                            text = "MalwaGeni",
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        if (currentUser != null) {
+                            Text(
+                                text = currentUser.displayName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    if (currentUser != null) {
+                        IconButton(
+                            onClick = onSignOut,
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                .semantics {
+                                    role = Role.Button
+                                    contentDescription = "Tombol Keluar dari akun ${currentUser.displayName}"
+                                }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ExitToApp,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 modifier = Modifier.semantics {
-                    contentDescription = "Aplikasi MalwaGeni. Sistem Kasir, Stok, dan Keuangan Ramah Aksesibilitas"
+                    val userDesc = currentUser?.getAccessibilityDescription() ?: ""
+                    contentDescription = "Aplikasi MalwaGeni. $userDesc"
                 }
             )
         }
