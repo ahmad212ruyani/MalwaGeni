@@ -135,22 +135,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun continueAsGuest() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            announce("Menyiapkan sesi tamu...")
-            when (val result = authManager.signInAnonymously()) {
-                is AuthResult.Success -> {
-                    _uiState.update { it.copy(currentUser = result.user, isLoading = false) }
-                    announce("Masuk sebagai mode tamu uji coba offline. Semua fitur kasir dan stok dapat digunakan.")
-                }
-                is AuthResult.Error -> {
-                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
-                }
-                is AuthResult.Cancelled -> {
-                    _uiState.update { it.copy(isLoading = false) }
-                }
-            }
-        }
+        val guest = authManager.createInstantGuestSession()
+        _uiState.update { it.copy(currentUser = guest, isLoading = false, errorMessage = null) }
+        announce("Masuk sebagai mode tamu offline. Anda dapat langsung menginput produk dan transaksi.")
     }
 
     fun signOut() {

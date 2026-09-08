@@ -9,12 +9,15 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.FirebaseException
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.malwageni.app.R
 import com.malwageni.app.model.UserAccount
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed class AuthResult {
     data class Success(val user: UserAccount) : AuthResult()
@@ -41,10 +44,14 @@ class FirebaseAuthManager(private val context: Context) {
                 .addCredentialOption(googleIdOption)
                 .build()
 
-            val response: GetCredentialResponse = credentialManager.getCredential(
-                request = request,
-                context = context
-            )
+            // Max 15 seconds timeout for selecting Google Account
+            val response: GetCredentialResponse? = withTimeoutOrNull(15000L) {
+                credentialManager.getCredential(request = request, context = context)
+            }
+
+            if (response == null) {
+                return AuthResult.Error("Waktu pemilihan akun Google habis. Silakan coba kembali atau gunakan Mode Tamu.")
+            }
 
             val credential = response.credential
             if (credential is CustomCredential &&
@@ -53,12 +60,14 @@ class FirebaseAuthManager(private val context: Context) {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 val idToken = googleIdTokenCredential.idToken
 
-                // Sign in to Firebase Auth with the Google ID Token
+                // Sign in to Firebase Auth with timeout
                 val authCredential = GoogleAuthProvider.getCredential(idToken, null)
-                val authResult = firebaseAuth.signInWithCredential(authCredential).await()
-                val firebaseUser = authResult.user
+                val authResult = withTimeoutOrNull(10000L) {
+                    firebaseAuth.signInWithCredential(authCredential).await()
+                }
 
-                if (firebaseUser != null) {
+                if (authResult?.user != null) {
+                    val firebaseUser = authResult.user!!
                     val user = UserAccount(
                         id = firebaseUser.uid,
                         displayName = firebaseUser.displayName ?: googleIdTokenCredential.displayName ?: "Pengguna Google",
@@ -68,25 +77,43 @@ class FirebaseAuthManager(private val context: Context) {
                     )
                     AuthResult.Success(user)
                 } else {
-                    AuthResult.Error("Gagal mengautentikasi profil Firebase.")
+                    // Fallback to Google Id info directly so user is never stuck
+                    val fallbackUser = UserAccount(
+                        id = googleIdTokenCredential.id,
+                        displayName = googleIdTokenCredential.displayName ?: "Pengguna Google",
+                        email = googleIdTokenCredential.id,
+                        profilePictureUrl = googleIdTokenCredential.profilePictureUri?.toString(),
+                        isAnonymous = false
+                    )
+                    AuthResult.Success(fallbackUser)
                 }
             } else {
-                AuthResult.Error("Tipe kredensial tidak dikenali.")
+                AuthResult.Error("Kredensial tidak dikenali.")
             }
         } catch (e: GetCredentialCancellationException) {
             AuthResult.Cancelled
         } catch (e: GetCredentialException) {
-            AuthResult.Error("Gagal menghubungkan akun Google: ${e.localizedMessage ?: "Terjadi kesalahan"}")
+            AuthResult.Error("Google Play Services: ${e.localizedMessage ?: "Gagal memuat akun Google"}")
+        } catch (e: FirebaseAuthException) {
+            val msg = if (e.errorCode == "ERROR_OPERATION_NOT_ALLOWED" || e.message?.contains("disabled", ignoreCase = true) == true) {
+                "Google Sign-In belum diaktifkan di Firebase Console (Authentication > Sign-in method). Silakan aktifkan terlebih dahulu."
+            } else {
+                e.localizedMessage ?: "Terjadi kendala autentikasi Firebase."
+            }
+            AuthResult.Error(msg)
         } catch (e: Exception) {
-            AuthResult.Error("Terjadi kendala autentikasi Google: ${e.localizedMessage ?: "Kesalahan tak terduga"}")
+            AuthResult.Error("Kendala: ${e.localizedMessage ?: "Gagal terhubung"}")
         }
     }
 
     suspend fun signInWithEmail(email: String, pass: String): AuthResult {
         return try {
-            val authResult = firebaseAuth.signInWithEmailAndPassword(email.trim(), pass).await()
-            val firebaseUser = authResult.user
-            if (firebaseUser != null) {
+            val authResult = withTimeoutOrNull(10000L) {
+                firebaseAuth.signInWithEmailAndPassword(email.trim(), pass).await()
+            }
+
+            if (authResult?.user != null) {
+                val firebaseUser = authResult.user!!
                 val user = UserAccount(
                     id = firebaseUser.uid,
                     displayName = firebaseUser.displayName ?: email.substringBefore("@"),
@@ -96,22 +123,38 @@ class FirebaseAuthManager(private val context: Context) {
                 )
                 AuthResult.Success(user)
             } else {
-                AuthResult.Error("Gagal masuk dengan email.")
+                AuthResult.Error("Waktu koneksi habis. Periksa koneksi internet Anda.")
             }
+        } catch (e: FirebaseAuthException) {
+            val msg = if (e.errorCode == "ERROR_OPERATION_NOT_ALLOWED" || e.message?.contains("disabled", ignoreCase = true) == true) {
+                "Email/Password belum diaktifkan di Firebase Console (Authentication > Sign-in method)."
+            } else if (e.errorCode == "ERROR_WRONG_PASSWORD" || e.errorCode == "ERROR_INVALID_CREDENTIAL") {
+                "Kata sandi salah. Silakan periksa kembali."
+            } else if (e.errorCode == "ERROR_USER_NOT_FOUND") {
+                "Akun email belum terdaftar. Silakan daftar terlebih dahulu."
+            } else {
+                e.localizedMessage ?: "Gagal masuk."
+            }
+            AuthResult.Error(msg)
         } catch (e: Exception) {
-            AuthResult.Error("Gagal masuk: ${e.localizedMessage ?: "Periksa email dan kata sandi Anda."}")
+            AuthResult.Error("Gagal masuk: ${e.localizedMessage ?: "Periksa email dan password."}")
         }
     }
 
     suspend fun signUpWithEmail(email: String, pass: String, name: String): AuthResult {
         return try {
-            val authResult = firebaseAuth.createUserWithEmailAndPassword(email.trim(), pass).await()
-            val firebaseUser = authResult.user
-            if (firebaseUser != null) {
-                val profileUpdates = UserProfileChangeRequest.Builder()
-                    .setDisplayName(name.trim())
-                    .build()
-                firebaseUser.updateProfile(profileUpdates).await()
+            val authResult = withTimeoutOrNull(10000L) {
+                firebaseAuth.createUserWithEmailAndPassword(email.trim(), pass).await()
+            }
+
+            if (authResult?.user != null) {
+                val firebaseUser = authResult.user!!
+                try {
+                    val profileUpdates = UserProfileChangeRequest.Builder()
+                        .setDisplayName(name.trim())
+                        .build()
+                    firebaseUser.updateProfile(profileUpdates).await()
+                } catch (_: Exception) {}
 
                 val user = UserAccount(
                     id = firebaseUser.uid,
@@ -122,15 +165,26 @@ class FirebaseAuthManager(private val context: Context) {
                 )
                 AuthResult.Success(user)
             } else {
-                AuthResult.Error("Gagal mendaftarkan akun.")
+                AuthResult.Error("Waktu pendaftaran habis. Periksa koneksi internet Anda.")
             }
+        } catch (e: FirebaseAuthException) {
+            val msg = if (e.errorCode == "ERROR_OPERATION_NOT_ALLOWED" || e.message?.contains("disabled", ignoreCase = true) == true) {
+                "Email/Password belum diaktifkan di Firebase Console (Authentication > Sign-in method)."
+            } else if (e.errorCode == "ERROR_EMAIL_ALREADY_IN_USE") {
+                "Email sudah terdaftar. Silakan pilih menu Masuk."
+            } else {
+                e.localizedMessage ?: "Gagal mendaftar."
+            }
+            AuthResult.Error(msg)
         } catch (e: Exception) {
             AuthResult.Error("Gagal mendaftar: ${e.localizedMessage ?: "Silakan coba lagi."}")
         }
     }
 
     fun signOut() {
-        firebaseAuth.signOut()
+        try {
+            firebaseAuth.signOut()
+        } catch (_: Exception) {}
     }
 
     fun getCurrentFirebaseUser(): UserAccount? {
@@ -144,29 +198,16 @@ class FirebaseAuthManager(private val context: Context) {
         )
     }
 
-    suspend fun signInAnonymously(): AuthResult {
-        return try {
-            val result = firebaseAuth.signInAnonymously().await()
-            val fbUser = result.user
-            val user = UserAccount(
-                id = fbUser?.uid ?: ("guest_" + System.currentTimeMillis()),
-                displayName = "Tamu MalwaGeni (Uji Coba)",
-                email = "offline.guest@malwageni.local",
-                profilePictureUrl = null,
-                isAnonymous = true
-            )
-            AuthResult.Success(user)
-        } catch (e: Exception) {
-            // Local fallback if offline
-            AuthResult.Success(
-                UserAccount(
-                    id = "guest_" + System.currentTimeMillis(),
-                    displayName = "Tamu MalwaGeni (Offline)",
-                    email = "offline.guest@malwageni.local",
-                    profilePictureUrl = null,
-                    isAnonymous = true
-                )
-            )
-        }
+    /**
+     * Instant local guest session. Never hangs, never requires network.
+     */
+    fun createInstantGuestSession(): UserAccount {
+        return UserAccount(
+            id = "guest_local",
+            displayName = "Tamu Toko (Mode Offline)",
+            email = "offline@malwageni.local",
+            profilePictureUrl = null,
+            isAnonymous = true
+        )
     }
 }

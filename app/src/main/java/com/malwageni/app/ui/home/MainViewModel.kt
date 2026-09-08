@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.malwageni.app.accessibility.AccessibilityUtils
+import com.malwageni.app.data.LocalDataRepository
 import com.malwageni.app.model.ProductItem
 import com.malwageni.app.model.TransactionItem
 import com.malwageni.app.model.TransactionType
@@ -45,6 +46,7 @@ data class MainUiState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val repository = LocalDataRepository(application)
     private val connectivityObserver: ConnectivityObserver = NetworkConnectivityObserver(application)
 
     private val _uiState = MutableStateFlow(MainUiState())
@@ -54,7 +56,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val accessibilityEvents: SharedFlow<String> = _accessibilityEvents.asSharedFlow()
 
     init {
-        loadInitialData()
+        loadPersistedData()
         observeNetwork()
     }
 
@@ -63,33 +65,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             connectivityObserver.observe().collect { status ->
                 _uiState.update { it.copy(networkStatus = status) }
                 val announcement = if (status.isConnected) {
-                    "Koneksi internet aktif. Sinkronisasi data cloud siap."
+                    "Koneksi internet aktif."
                 } else {
-                    "Koneksi internet terputus. Mode offline diaktifkan."
+                    "Koneksi internet terputus. Menggunakan database lokal."
                 }
                 announce(announcement)
             }
         }
     }
 
-    private fun loadInitialData() {
-        val initialProducts = listOf(
-            ProductItem("1", "Kopi Robusta 250g", "8991001", 18000.0, 25000.0, 15),
-            ProductItem("2", "Gula Pasir 1kg", "8991002", 14000.0, 17500.0, 24),
-            ProductItem("3", "Susu Segar UHT 1L", "8991003", 16000.0, 21000.0, 4), // Low stock
-            ProductItem("4", "Teh Celup Kotak", "8991004", 6000.0, 9000.0, 30)
-        )
-
-        val initialTransactions = listOf(
-            TransactionItem("t1", "Modal Kas Awal Toko", 500000.0, TransactionType.INCOME),
-            TransactionItem("t2", "Beli ATK & Nota Kasir", 35000.0, TransactionType.EXPENSE),
-            TransactionItem("t3", "Penjualan 2 Kopi Robusta", 50000.0, TransactionType.SALE)
-        )
+    /**
+     * Loads clean data directly from the local database.
+     * Starts with 0 products and 0 transactions if user hasn't added any yet!
+     */
+    private fun loadPersistedData() {
+        val savedProducts = repository.loadProducts()
+        val savedTransactions = repository.loadTransactions()
 
         _uiState.update { state ->
             state.copy(
-                products = initialProducts,
-                transactions = initialTransactions
+                products = savedProducts,
+                transactions = savedTransactions
             )
         }
         recalculateFinance()
@@ -98,6 +94,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectTab(tab: AppTab) {
         _uiState.update { it.copy(currentTab = tab) }
         announce("Membuka ${tab.title}. ${tab.a11yDescription}")
+    }
+
+    fun addNewProduct(name: String, sku: String, costPrice: Double, sellPrice: Double, initialStock: Int) {
+        if (name.isBlank()) {
+            announce("Nama produk tidak boleh kosong.")
+            return
+        }
+
+        val newProduct = ProductItem(
+            id = "prod_" + System.currentTimeMillis(),
+            name = name.trim(),
+            sku = if (sku.isBlank()) "-" else sku.trim(),
+            costPrice = costPrice.coerceAtLeast(0.0),
+            sellPrice = sellPrice.coerceAtLeast(0.0),
+            stockQuantity = initialStock.coerceAtLeast(0)
+        )
+
+        val updatedProducts = _uiState.value.products + newProduct
+        repository.saveProducts(updatedProducts)
+        _uiState.update { it.copy(products = updatedProducts) }
+
+        val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(sellPrice)
+        announce("Produk ${newProduct.name} berhasil disimpan ke database. Harga $formatRp, stok $initialStock unit.")
+    }
+
+    fun deleteProduct(productId: String) {
+        val target = _uiState.value.products.find { it.id == productId }
+        val updatedProducts = _uiState.value.products.filterNot { it.id == productId }
+        val updatedCart = _uiState.value.cart.filterNot { it.product.id == productId }
+
+        repository.saveProducts(updatedProducts)
+        _uiState.update { it.copy(products = updatedProducts, cart = updatedCart) }
+
+        if (target != null) {
+            announce("Produk ${target.name} telah dihapus dari database.")
+        }
     }
 
     fun addToCart(product: ProductItem) {
@@ -126,7 +158,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearCart() {
         _uiState.update { it.copy(cart = emptyList()) }
-        announce("Keranjang belanja telah dikosongkan.")
+        announce("Keranjang belanja kasir telah dikosongkan.")
     }
 
     fun checkoutCart() {
@@ -140,60 +172,75 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(cartTotal)
 
         // Decrease stock & record sale transaction
+        val updatedProducts = _uiState.value.products.map { prod ->
+            val bought = currentCart.find { it.product.id == prod.id }
+            if (bought != null) prod.copy(stockQuantity = (prod.stockQuantity - bought.quantity).coerceAtLeast(0))
+            else prod
+        }
+
+        val newTransaction = TransactionItem(
+            id = "tx_" + System.currentTimeMillis(),
+            description = "Penjualan Kasir (${currentCart.size} jenis barang)",
+            amount = cartTotal,
+            type = TransactionType.SALE
+        )
+
+        val updatedTransactions = listOf(newTransaction) + _uiState.value.transactions
+
+        repository.saveProducts(updatedProducts)
+        repository.saveTransactions(updatedTransactions)
+
         _uiState.update { state ->
-            val updatedProducts = state.products.map { prod ->
-                val bought = currentCart.find { it.product.id == prod.id }
-                if (bought != null) prod.copy(stockQuantity = (prod.stockQuantity - bought.quantity).coerceAtLeast(0))
-                else prod
-            }
-
-            val newTransaction = TransactionItem(
-                id = System.currentTimeMillis().toString(),
-                description = "Penjualan POS (${currentCart.size} jenis produk)",
-                amount = cartTotal,
-                type = TransactionType.SALE
-            )
-
             state.copy(
                 products = updatedProducts,
-                transactions = listOf(newTransaction) + state.transactions,
+                transactions = updatedTransactions,
                 cart = emptyList()
             )
         }
 
         recalculateFinance()
-        announce("Pembayaran berhasil diselesaikan senilai $formatRp. Stok otomatis diperbarui dan transaksi dicatat.")
+        announce("Pembayaran berhasil senilai $formatRp. Data kasir dan stok otomatis disimpan ke database.")
     }
 
     fun restockProduct(productId: String, amountToAdd: Int = 10) {
         var productName = ""
         var newStock = 0
-        _uiState.update { state ->
-            val updated = state.products.map { prod ->
-                if (prod.id == productId) {
-                    productName = prod.name
-                    newStock = prod.stockQuantity + amountToAdd
-                    prod.copy(stockQuantity = newStock)
-                } else {
-                    prod
-                }
+        val updated = _uiState.value.products.map { prod ->
+            if (prod.id == productId) {
+                productName = prod.name
+                newStock = prod.stockQuantity + amountToAdd
+                prod.copy(stockQuantity = newStock)
+            } else {
+                prod
             }
-            state.copy(products = updated)
         }
-        announce("Restock berhasil. Stok $productName bertambah $amountToAdd, kini menjadi $newStock unit.")
+
+        repository.saveProducts(updated)
+        _uiState.update { it.copy(products = updated) }
+        announce("Restock berhasil. Stok $productName kini menjadi $newStock unit.")
     }
 
     fun addManualTransaction(description: String, amount: Double, type: TransactionType) {
+        if (description.isBlank() || amount <= 0.0) {
+            announce("Keterangan dan nominal transaksi tidak boleh kosong.")
+            return
+        }
+
         val newTx = TransactionItem(
-            id = System.currentTimeMillis().toString(),
-            description = description,
+            id = "tx_" + System.currentTimeMillis(),
+            description = description.trim(),
             amount = amount,
             type = type
         )
-        _uiState.update { it.copy(transactions = listOf(newTx) + it.transactions) }
+
+        val updatedTxs = listOf(newTx) + _uiState.value.transactions
+        repository.saveTransactions(updatedTxs)
+
+        _uiState.update { it.copy(transactions = updatedTxs) }
         recalculateFinance()
+
         val formatRp = NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(amount)
-        announce("Catatan keuangan baru berhasil disimpan: $description, senilai $formatRp.")
+        announce("Transaksi baru disimpan ke database: $description, senilai $formatRp.")
     }
 
     private fun recalculateFinance() {

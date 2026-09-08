@@ -12,33 +12,45 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,8 +61,12 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.malwageni.app.model.ProductItem
 import com.malwageni.app.model.TransactionType
+import com.malwageni.app.model.UserAccount
 import com.malwageni.app.ui.components.AccessibleActionButton
 import com.malwageni.app.ui.components.AccessibleNetworkStatusBar
 import com.malwageni.app.ui.components.AccessibleProductCard
@@ -59,10 +75,6 @@ import com.malwageni.app.ui.theme.ExpenseRed
 import com.malwageni.app.ui.theme.IncomeGreen
 import java.text.NumberFormat
 import java.util.Locale
-
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material3.IconButton
-import com.malwageni.app.model.UserAccount
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,10 +87,33 @@ fun MainScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    var showAddProductDialog by remember { mutableStateOf(false) }
+    var showAddTransactionDialog by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         viewModel.accessibilityEvents.collect { message ->
             snackbarHostState.showSnackbar(message)
         }
+    }
+
+    if (showAddProductDialog) {
+        AddProductDialog(
+            onDismiss = { showAddProductDialog = false },
+            onSave = { name, sku, cost, sell, stock ->
+                viewModel.addNewProduct(name, sku, cost, sell, stock)
+                showAddProductDialog = false
+            }
+        )
+    }
+
+    if (showAddTransactionDialog) {
+        AddTransactionDialog(
+            onDismiss = { showAddTransactionDialog = false },
+            onSave = { desc, amount, type ->
+                viewModel.addManualTransaction(desc, amount, type)
+                showAddTransactionDialog = false
+            }
+        )
     }
 
     Scaffold(
@@ -113,7 +148,7 @@ fun MainScreen(
                                 }
                         ) {
                             Icon(
-                                imageVector = Icons.Default.ExitToApp,
+                                imageVector = Icons.AutoMirrored.Filled.ExitToApp,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onPrimary
                             )
@@ -136,48 +171,38 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Accessible Network Status Indicator with LiveRegion
             AccessibleNetworkStatusBar(status = uiState.networkStatus)
 
-            // Accessible Navigation Bar Tabs (Linear Focus & >=48dp touch targets)
             AccessibleTabBar(
                 selectedTab = uiState.currentTab,
                 onTabSelected = { viewModel.selectTab(it) }
             )
 
-            Divider()
+            HorizontalDivider()
 
-            // Dynamic Content based on selected Tab
             when (uiState.currentTab) {
                 AppTab.POS -> PosTabContent(
                     uiState = uiState,
                     onAddToCart = { viewModel.addToCart(it) },
                     onClearCart = { viewModel.clearCart() },
-                    onCheckout = { viewModel.checkoutCart() }
+                    onCheckout = { viewModel.checkoutCart() },
+                    onNavigateToInventory = { viewModel.selectTab(AppTab.INVENTORY) }
                 )
                 AppTab.INVENTORY -> InventoryTabContent(
                     uiState = uiState,
-                    onRestock = { viewModel.restockProduct(it) }
+                    onRestock = { viewModel.restockProduct(it) },
+                    onDelete = { viewModel.deleteProduct(it) },
+                    onOpenAddProduct = { showAddProductDialog = true }
                 )
                 AppTab.LEDGER -> LedgerTabContent(
                     uiState = uiState,
-                    onAddSampleExpense = {
-                        viewModel.addManualTransaction(
-                            description = "Biaya Listrik Toko",
-                            amount = 120000.0,
-                            type = TransactionType.EXPENSE
-                        )
-                    }
+                    onOpenAddTransaction = { showAddTransactionDialog = true }
                 )
             }
         }
     }
 }
 
-/**
- * Tab Row designed for screen readers with explicit Tab semantics,
- * selected state, and minimum 48dp touch height.
- */
 @Composable
 fun AccessibleTabBar(
     selectedTab: AppTab,
@@ -228,15 +253,13 @@ fun AccessibleTabBar(
     }
 }
 
-/**
- * POS (Kasir) Tab: Display cart overview and fast catalog buttons.
- */
 @Composable
 fun PosTabContent(
     uiState: MainUiState,
-    onAddToCart: (com.malwageni.app.model.ProductItem) -> Unit,
+    onAddToCart: (ProductItem) -> Unit,
     onClearCart: () -> Unit,
-    onCheckout: () -> Unit
+    onCheckout: () -> Unit,
+    onNavigateToInventory: () -> Unit
 ) {
     val cartCount = uiState.cart.sumOf { it.quantity }
     val cartTotal = uiState.cart.sumOf { it.product.sellPrice * it.quantity }
@@ -248,13 +271,12 @@ fun PosTabContent(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Cart Summary Card (Grouped semantics for screen readers)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics(mergeDescendants = true) {
-                        contentDescription = "Ringkasan Kasir. Total keranjang: $cartCount item. Jumlah tagihan: $formattedTotal."
+                        contentDescription = "Ringkasan Kasir. Total keranjang: $cartCount item. Tagihan: $formattedTotal."
                         liveRegion = LiveRegionMode.Polite
                     },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -299,7 +321,7 @@ fun PosTabContent(
                         )
                         AccessibleActionButton(
                             text = "Bayar",
-                            contentDescription = "Lanjutkan proses pembayaran kasir senilai $formattedTotal",
+                            contentDescription = "Lanjutkan proses pembayaran senilai $formattedTotal",
                             onClick = onCheckout,
                             icon = Icons.Default.Check,
                             backgroundColor = IncomeGreen,
@@ -318,22 +340,66 @@ fun PosTabContent(
             )
         }
 
-        items(uiState.products) { product ->
-            AccessibleProductCard(
-                product = product,
-                onClick = { onAddToCart(product) }
-            )
+        if (uiState.products.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = "Katalog kasir masih kosong. Silakan buka menu Stok Barang untuk menambahkan produk."
+                        },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Inventory2,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Belum Ada Produk di Kasir",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "Katalog Anda masih kosong. Buka tab Stok Barang untuk menambah produk toko Anda sendiri.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        AccessibleActionButton(
+                            text = "Buka Menu Stok Barang",
+                            contentDescription = "Buka menu Stok Barang untuk menambah produk baru",
+                            onClick = onNavigateToInventory
+                        )
+                    }
+                }
+            }
+        } else {
+            items(uiState.products) { product ->
+                AccessibleProductCard(
+                    product = product,
+                    onClick = { onAddToCart(product) }
+                )
+            }
         }
     }
 }
 
-/**
- * Inventory (Stok & Restock) Tab.
- */
 @Composable
 fun InventoryTabContent(
     uiState: MainUiState,
-    onRestock: (String) -> Unit
+    onRestock: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onOpenAddProduct: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -342,64 +408,132 @@ fun InventoryTabContent(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text(
-                text = "Katalog & Manajemen Persediaan",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(
-                text = "Ketuk tombol restock untuk menambahkan 10 unit stok barang ke gudang.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Katalog & Manajemen Stok",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Total ${uiState.products.size} produk terdaftar di database.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        item {
+            AccessibleActionButton(
+                text = "+ Tambah Produk Baru",
+                contentDescription = "Tombol Tambah Produk Baru. Buka formulir untuk memasukkan barang dagangan Anda sendiri.",
+                onClick = onOpenAddProduct,
+                icon = Icons.Default.Add,
+                modifier = Modifier.fillMaxWidth()
             )
         }
 
-        items(uiState.products) { product ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics(mergeDescendants = true) {
-                        contentDescription = "Produk: ${product.name}. Barcode: ${product.sku}. Stok saat ini: ${product.stockQuantity} unit."
-                    },
-                shape = RoundedCornerShape(10.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
-                Row(
+        if (uiState.products.isEmpty()) {
+            item {
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = "Gudang stok masih kosong. Ketuk tombol Tambah Produk Baru di atas untuk mulai mengisi barang Anda."
+                        },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                            text = product.name,
+                            text = "Stok Gudang Bersih & Kosong",
                             style = MaterialTheme.typography.titleMedium
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Stok: ${product.stockQuantity} unit",
+                            text = "Tidak ada data tiruan (dummy). Anda dapat mengisi katalog toko Anda sendiri menggunakan tombol '+ Tambah Produk Baru' di atas.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (product.stockQuantity <= 5) ExpenseRed else IncomeGreen
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    AccessibleActionButton(
-                        text = "+10 Stok",
-                        contentDescription = "Tambah 10 stok untuk ${product.name}",
-                        onClick = { onRestock(product.id) },
-                        icon = Icons.Default.Add
-                    )
+                }
+            }
+        } else {
+            items(uiState.products) { product ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = product.getAccessibilityDescription()
+                        },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = product.name,
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = "Barcode: ${product.sku} | Harga Jual: ${product.formattedSellPrice()}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "Sisa Stok: ${product.stockQuantity} unit",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (product.stockQuantity <= 5) ExpenseRed else IncomeGreen
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            AccessibleActionButton(
+                                text = "+10 Stok",
+                                contentDescription = "Tambah 10 unit stok untuk ${product.name}",
+                                onClick = { onRestock(product.id) },
+                                icon = Icons.Default.Add
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            AccessibleActionButton(
+                                text = "Hapus",
+                                contentDescription = "Hapus produk ${product.name} dari database",
+                                onClick = { onDelete(product.id) },
+                                icon = Icons.Default.Delete,
+                                backgroundColor = ExpenseRed
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-/**
- * Dual-Ledger Financial Management Tab.
- */
 @Composable
 fun LedgerTabContent(
     uiState: MainUiState,
-    onAddSampleExpense: () -> Unit
+    onOpenAddTransaction: () -> Unit
 ) {
     val formatRp = { amount: Double ->
         NumberFormat.getCurrencyInstance(Locale("in", "ID")).format(amount)
@@ -411,7 +545,6 @@ fun LedgerTabContent(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Financial Balance Card
         item {
             Card(
                 modifier = Modifier
@@ -442,7 +575,7 @@ fun LedgerTabContent(
                         Text("Pengeluaran:", style = MaterialTheme.typography.bodyLarge)
                         Text(formatRp(uiState.totalExpense), style = MaterialTheme.typography.bodyLarge, color = ExpenseRed)
                     }
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -460,24 +593,259 @@ fun LedgerTabContent(
 
         item {
             AccessibleActionButton(
-                text = "+ Catat Pengeluaran Operasional",
-                contentDescription = "Catat transaksi beban pengeluaran operasional toko sebesar Rp 120.000",
-                onClick = onAddSampleExpense,
+                text = "+ Catat Transaksi Keuangan",
+                contentDescription = "Catat transaksi pemasukan atau pengeluaran keuangan baru Anda",
+                onClick = onOpenAddTransaction,
                 backgroundColor = MaterialTheme.colorScheme.secondary,
+                icon = Icons.Default.Add,
                 modifier = Modifier.fillMaxWidth()
             )
         }
 
         item {
             Text(
-                text = "Riwayat Transaksi Terakhir",
+                text = "Riwayat Catatan Transaksi",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(top = 8.dp)
             )
         }
 
-        items(uiState.transactions) { tx ->
-            AccessibleTransactionCard(transaction = tx)
+        if (uiState.transactions.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = "Belum ada transaksi yang dicatat. Ketuk Catat Transaksi Keuangan di atas untuk menambahkan."
+                        },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ReceiptLong,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Belum Ada Catatan Transaksi",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "Transaksi penjualan dari kasir maupun catatan manual Anda akan otomatis tersimpan di sini.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        } else {
+            items(uiState.transactions) { tx ->
+                AccessibleTransactionCard(transaction = tx)
+            }
         }
     }
+}
+
+/**
+ * Accessible Dialog to Add a New Custom Product.
+ */
+@Composable
+fun AddProductDialog(
+    onDismiss: () -> Unit,
+    onSave: (name: String, sku: String, costPrice: Double, sellPrice: Double, initialStock: Int) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var sku by remember { mutableStateOf("") }
+    var costPriceStr by remember { mutableStateOf("") }
+    var sellPriceStr by remember { mutableStateOf("") }
+    var stockStr by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Tambah Produk Baru",
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nama Produk (Wajib)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = sku,
+                    onValueChange = { sku = it },
+                    label = { Text("Kode Barcode / SKU (Opsional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = costPriceStr,
+                    onValueChange = { costPriceStr = it },
+                    label = { Text("Harga Modal (Rp)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = sellPriceStr,
+                    onValueChange = { sellPriceStr = it },
+                    label = { Text("Harga Jual (Rp)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = stockStr,
+                    onValueChange = { stockStr = it },
+                    label = { Text("Jumlah Stok Awal") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val cost = costPriceStr.toDoubleOrNull() ?: 0.0
+                    val sell = sellPriceStr.toDoubleOrNull() ?: 0.0
+                    val stock = stockStr.toIntOrNull() ?: 0
+                    onSave(name, sku, cost, sell, stock)
+                },
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+            ) {
+                Text("Simpan Produk", style = MaterialTheme.typography.labelLarge)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+            ) {
+                Text("Batal", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    )
+}
+
+/**
+ * Accessible Dialog to Record a Manual Financial Transaction.
+ */
+@Composable
+fun AddTransactionDialog(
+    onDismiss: () -> Unit,
+    onSave: (description: String, amount: Double, type: TransactionType) -> Unit
+) {
+    var description by remember { mutableStateOf("") }
+    var amountStr by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(TransactionType.EXPENSE) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Catat Transaksi Keuangan",
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { selectedType = TransactionType.EXPENSE }
+                            .padding(4.dp)
+                    ) {
+                        RadioButton(
+                            selected = selectedType == TransactionType.EXPENSE,
+                            onClick = { selectedType = TransactionType.EXPENSE }
+                        )
+                        Text("Pengeluaran")
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { selectedType = TransactionType.INCOME }
+                            .padding(4.dp)
+                    ) {
+                        RadioButton(
+                            selected = selectedType == TransactionType.INCOME,
+                            onClick = { selectedType = TransactionType.INCOME }
+                        )
+                        Text("Pemasukan")
+                    }
+                }
+
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Keterangan Transaksi") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = amountStr,
+                    onValueChange = { amountStr = it },
+                    label = { Text("Nominal (Rp)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val amount = amountStr.toDoubleOrNull() ?: 0.0
+                    onSave(description, amount, selectedType)
+                },
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+            ) {
+                Text("Simpan Transaksi", style = MaterialTheme.typography.labelLarge)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+            ) {
+                Text("Batal", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    )
 }
